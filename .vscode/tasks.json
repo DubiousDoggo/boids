@@ -1,0 +1,60 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "C/C++: g++ build project",
+			"command": "D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe",
+			"args": [
+				"-std=c++17",
+				"-Wall",
+				"-Wextra",
+				"-Wpedantic",
+				"-g",
+				"*.cc",
+				"-o",
+				"SDLTest.exe",
+				"-ISDL2\\include",
+				"-LSDL2\\lib",
+				"-lmingw32",
+				"-lSDL2main",
+				"-lSDL2",
+			],
+			"options": {},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"type": "shell",
+			"label": "C/C++: g++ build distribuatable",
+			"command": "D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe",
+			"args": [
+				"-std=c++17",
+				"-Wall",
+				"-Wextra",
+				"-Wpedantic",
+				"-g",
+				"*.cc",
+				"-o",
+				"SDLTest-distribuatable.exe",
+				"-ISDL2\\include",
+				"-LSDL2\\lib",
+				"-lmingw32",
+				"-lSDL2main",
+				"-lSDL2",
+				"-static-libgcc",
+				"-static-libstdc++"
+			],
+			"options": {},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		}
+	]
+}

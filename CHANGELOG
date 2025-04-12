@@ -1,0 +1,7 @@
+4/12/2025:
+    A few days ago (~4/10), I came across this folder with an old half-finished
+    project implementing "boids" (bird objects), from about 5 years ago (the 
+    oldest timestamp is ~2020). I've rewritten most of it in a haze the past 2
+    days, replacing all the sines and cosines with vector operations, and
+    implemented the 3rd boid behavior of avoidance, as well as added some 
+    additional debug displays.

@@ -1,4 +1,2 @@
 SDL2
-.vscode
-*.exe
-*.zip
+.vscode/settings.json
