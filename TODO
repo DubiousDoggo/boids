@@ -1,7 +1,10 @@
+5/27/2025:
+- Compile to WASM [x]
+- see https://github.com/Reesy/sdl2-emscripten-project-template
 
 4/12/2025:
 - CHANGELOG [x]
 - README    [x]
-- MAKEFILE  [ ]
+- MAKEFILE  [x] - 5/29/25
 
 

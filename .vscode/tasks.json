@@ -3,23 +3,8 @@
 	"tasks": [
 		{
 			"type": "shell",
-			"label": "C/C++: g++ build project",
-			"command": "D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe",
-			"args": [
-				"-std=c++17",
-				"-Wall",
-				"-Wextra",
-				"-Wpedantic",
-				"-g",
-				"*.cc",
-				"-o",
-				"SDLTest.exe",
-				"-ISDL2\\include",
-				"-LSDL2\\lib",
-				"-lmingw32",
-				"-lSDL2main",
-				"-lSDL2",
-			],
+			"label": "make",
+			"command": "make",
 			"options": {},
 			"problemMatcher": [
 				"$gcc"
