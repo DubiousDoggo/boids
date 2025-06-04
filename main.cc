@@ -1,3 +1,8 @@
+
+#if __EMSCRIPTEN__
+	#include <emscripten/emscripten.h>
+#endif
+
 #include <SDL2\SDL.h>
 
 #include <cmath>
@@ -180,6 +185,9 @@ const int font_width = 8;
 const int font_height = 14;
 void RenderMessage(SDL_Renderer* renderer, int x, int y, const std::string& text)
 {
+    #if __EMSCRIPTEN__
+        return; // FIXME: src parameter invalid
+    #endif
     static SDL_Texture* font = nullptr;
     if (font == nullptr) {
         if ((font = loadTexture(renderer, "font.bmp")) == nullptr) {
@@ -458,6 +466,22 @@ void MoveBoids()
     boids = new_boids;
 }
 
+void mainLoop();
+
+
+SDL_Renderer* sdlRenderer;
+const int param_rows = 4;
+const int param_cols = 5;
+int param_index = 0;
+float *params[param_rows * param_cols] = { &alignmentRadius, &cohesionRadius, &avoidanceRadius, &tailwindRadius, &obstacleRadius,
+                                           &alignmentWeight, &cohesionWeight, &avoidanceWeight, &tailwindWeight, &obstacleWeight,
+                                           &maxSpeed,        &maxAccel,       nullptr,          &dragCoeff,      &edgeObstacle, 
+                                           &minSpeed,        &baseAccel,      nullptr,          nullptr,         nullptr };
+float delta[param_rows * param_cols];
+
+bool running = true;
+bool advance = true;
+bool step = false;
 
 
 int main(int argc, char* argv[])
@@ -474,7 +498,7 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    SDL_Renderer* sdlRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    sdlRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (sdlRenderer == nullptr) {
         cleanup(window);
         logSDLError("CreateRenderer");
@@ -482,99 +506,104 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-
-
-    const int param_rows = 4;
-    const int param_cols = 5;
-    int param_index = 0;
-    float *params[param_rows * param_cols] = { &alignmentRadius, &cohesionRadius, &avoidanceRadius, &tailwindRadius, &obstacleRadius,
-                                               &alignmentWeight, &cohesionWeight, &avoidanceWeight, &tailwindWeight, &obstacleWeight,
-                                               &maxSpeed,        &maxAccel,       nullptr,          &dragCoeff,      &edgeObstacle, 
-                                               &minSpeed,        &baseAccel,      nullptr,          nullptr,         nullptr };
-    float delta[param_rows * param_cols];
     for (int i = 0; i < param_rows * param_cols; i++) {
         if (params[i] != nullptr) delta[i] = *params[i] * .05f; // adjust by 5% of initial value
     }
 
     init_boids();
 
-    bool running = true;
-    bool advance = true;
-    bool step = false;
+
+    #if __EMSCRIPTEN__
+    emscripten_set_main_loop(mainLoop, -1, 1);
+    #else
     while (running)
     {
-        // Draw the screen
-        SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-        SDL_RenderClear(sdlRenderer);
-
-        RenderBoids(sdlRenderer);
-
-        
-        #define STRINGIZE(S) #S
-        #define STRING(S) STRINGIZE(S)
-        #define PARAM_WIDTH 10
-        #define PARAM_FMT " %" STRING(PARAM_WIDTH) "f"
-        // Render parameters
-        RenderMessage(sdlRenderer, 5, 5, string_format(
-            "Use arrow keys and +/- to edit parameters. Press ~ to toggle debug display, R to reset all boids. A to toggle single step, space to advance\n" 
-            "        ALIGNMENT   COHESION  AVOIDANCE   TAILWIND  OBSTACLE\n"
-            "RADIUS" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
-            "WEIGHT" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
-            "            SPEED      ACCEL              DRAG          EDGE\n"
-            "   MAX" PARAM_FMT PARAM_FMT "           " PARAM_FMT PARAM_FMT "\n"
-            "   MIN" PARAM_FMT PARAM_FMT "\n",
-            alignmentRadius, cohesionRadius, avoidanceRadius, tailwindRadius, obstacleRadius,
-            alignmentWeight, cohesionWeight, avoidanceWeight, tailwindWeight, obstacleWeight,
-            maxSpeed, maxAccel, dragCoeff, edgeObstacle,
-            minSpeed, baseAccel
-        ));
-        
-        SDL_Rect cursor = { (11 + (param_index % param_cols) * (PARAM_WIDTH+1)) * font_width,
-                            ((7 + (param_index / param_cols) + (param_index / (2 * param_cols))) * font_height), 
-                            (PARAM_WIDTH+2) * font_width, font_height };
-        SDL_SetRenderDrawColor(sdlRenderer, COLOR_CURSOR, 255);
-        SDL_RenderDrawRect(sdlRenderer, &cursor);
-        
-        if (advance) {
-            // Update boids
-            MoveBoids();
-            if (step) { advance = false; }
-        }
-
-        SDL_RenderPresent(sdlRenderer);
-
-        // process events
-        SDL_Event ev;
-        int next_param;
-        while (SDL_PollEvent(&ev))
-        {
-            switch (ev.type) {
-            case SDL_QUIT:
-                running = false;
-                break;
-            case SDL_KEYDOWN:
-                switch (ev.key.keysym.sym) {
-                
-                case SDLK_UP:    if ((next_param = param_index - param_cols) >= 0                            && params[next_param] != nullptr) param_index = next_param; break;
-                case SDLK_DOWN:  if ((next_param = param_index + param_cols) < (param_cols * param_rows - 1) && params[next_param] != nullptr) param_index = next_param; break;
-                case SDLK_LEFT:  if ((next_param = param_index - 1) >= 0                                     && params[next_param] != nullptr) param_index = next_param; break;
-                case SDLK_RIGHT: if ((next_param = param_index + 1) < (param_cols * param_rows - 1)          && params[next_param] != nullptr) param_index = next_param; break;
-                
-                case SDLK_EQUALS:
-                case SDLK_PLUS:  *params[param_index] += delta[param_index]; break;
-                case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
-                
-                case SDLK_BACKQUOTE: DEBUG_ENABLE = !DEBUG_ENABLE; break;
-                case SDLK_r: init_boids(); break;
-                case SDLK_a: step = !step; break;
-                case SDLK_SPACE: advance = true; break;
-                }
-                break;
-            }
-        }
+        mainLoop();
     }
+    #endif
 
     cleanup(sdlRenderer, window);
     SDL_Quit();
     return 0;
+}
+
+
+void mainLoop()
+{
+    // Draw the screen
+    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+    SDL_RenderClear(sdlRenderer);
+
+    RenderBoids(sdlRenderer);
+
+    #if !__EMSCRIPTEN__
+
+    #define STRINGIZE(S) #S
+    #define STRING(S) STRINGIZE(S)
+    #define PARAM_WIDTH 10
+    #define PARAM_FMT " %" STRING(PARAM_WIDTH) "f"
+    // Render parameters
+    RenderMessage(sdlRenderer, 5, 5, string_format(
+        "Use arrow keys and +/- to edit parameters. Press ~ to toggle debug display, R to reset all boids. A to toggle single step, space to advance\n" 
+        "        ALIGNMENT   COHESION  AVOIDANCE   TAILWIND  OBSTACLE\n"
+        "RADIUS" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
+        "WEIGHT" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
+        "            SPEED      ACCEL              DRAG          EDGE\n"
+        "   MAX" PARAM_FMT PARAM_FMT "           " PARAM_FMT PARAM_FMT "\n"
+        "   MIN" PARAM_FMT PARAM_FMT "\n",
+        alignmentRadius, cohesionRadius, avoidanceRadius, tailwindRadius, obstacleRadius,
+        alignmentWeight, cohesionWeight, avoidanceWeight, tailwindWeight, obstacleWeight,
+        maxSpeed, maxAccel, dragCoeff, edgeObstacle,
+        minSpeed, baseAccel
+    ));
+    
+    SDL_Rect cursor = { (11 + (param_index % param_cols) * (PARAM_WIDTH+1)) * font_width,
+                        ((7 + (param_index / param_cols) + (param_index / (2 * param_cols))) * font_height), 
+                        (PARAM_WIDTH+2) * font_width, font_height };
+    SDL_SetRenderDrawColor(sdlRenderer, COLOR_CURSOR, 255);
+    SDL_RenderDrawRect(sdlRenderer, &cursor);
+    
+    #endif
+
+    if (advance) {
+        // Update boids
+        MoveBoids();
+        if (step) { advance = false; }
+    }
+
+
+    SDL_RenderPresent(sdlRenderer);
+
+
+    #if !__EMSCRIPTEN__  // don't process events for the debug screen when running in web
+    // process events
+    SDL_Event ev;
+    int next_param;
+    while (SDL_PollEvent(&ev))
+    {
+        switch (ev.type) {
+        case SDL_QUIT:
+            running = false;
+            break;
+        case SDL_KEYDOWN:
+            switch (ev.key.keysym.sym) {
+            
+            case SDLK_UP:    if ((next_param = param_index - param_cols) >= 0                            && params[next_param] != nullptr) param_index = next_param; break;
+            case SDLK_DOWN:  if ((next_param = param_index + param_cols) < (param_cols * param_rows - 1) && params[next_param] != nullptr) param_index = next_param; break;
+            case SDLK_LEFT:  if ((next_param = param_index - 1) >= 0                                     && params[next_param] != nullptr) param_index = next_param; break;
+            case SDLK_RIGHT: if ((next_param = param_index + 1) < (param_cols * param_rows - 1)          && params[next_param] != nullptr) param_index = next_param; break;
+            
+            case SDLK_EQUALS:
+            case SDLK_PLUS:  *params[param_index] += delta[param_index]; break;
+            case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
+            
+            case SDLK_BACKQUOTE: DEBUG_ENABLE = !DEBUG_ENABLE; break;
+            case SDLK_r: init_boids(); break;
+            case SDLK_a: step = !step; break;
+            case SDLK_SPACE: advance = true; break;
+            }
+            break;
+        }
+    }
+    #endif
 }
