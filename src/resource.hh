@@ -47,7 +47,7 @@ const std::string getResource(const std::string &resource)
             std::cout << "Error loading resources: " << SDL_GetError() << std::endl;
             return "";
         }
-        resPath = std::string{basePath} + "res" + PATH_SEPERATOR;
+        resPath = std::string{basePath} + PATH_SEPERATOR + ".." + PATH_SEPERATOR + "res" + PATH_SEPERATOR;
         SDL_free(basePath);
     }
     return resPath + resource;

@@ -57,6 +57,8 @@ const float debugVecMultiplier = 200;
 #define COLOR_OBSTACLE  255, 128,   0  // ORANGE
 #define COLOR_DRAG      128, 128, 128  // GREY
 
+#define COLOR_SKY      0, 128, 255 // SKY BLUE
+#define COLOR_GROUND  64, 200,   0 // GRASS GREEN 
 #define COLOR_BOID   255, 255, 255 // WHITE
 #define COLOR_LEADER   0, 160, 200 // DEEP BLUE
 #define COLOR_LEFT     0, 240,   0 // GREEN
@@ -114,7 +116,7 @@ constexpr vec2f proj(const vec2f& v1, const vec2f& v2) { return v2 * dot(v1, v2)
 constexpr float mag(const vec2f& vec) { return sqrtf(vec.x * vec.x + vec.y * vec.y); }
 constexpr vec2f normal(const vec2f& vec) { return mag(vec) != 0 ? vec / mag(vec) : vec2f{ 0, 0 }; }
 constexpr vec2f clamp_mag(const vec2f& vec, float min, float max) { return mag(vec) > max ? normal(vec) * max : mag(vec) < min ? normal(vec) * min : vec; }
-inline vec2f rotate(const vec2f& vec, float angle) { return { vec.x * cosf(angle) - vec.y * sinf(angle), vec.x * sinf(angle) + vec.y * cosf(angle) }; }
+constexpr vec2f rotate(const vec2f& vec, float angle) { return { vec.x * std::cos(angle) - vec.y * std::sin(angle), vec.x * std::sin(angle) + vec.y * std::cos(angle) }; }
 
 /** Compute the shortest vector from pos to the interior of rect */
 constexpr vec2f vec_to(vec2f pos, SDL_FRect rect)
@@ -130,21 +132,32 @@ constexpr vec2f vec_to(vec2f pos, SDL_FRect rect)
 template <typename T>
 constexpr T clamp(const T& a, const T& mi, const T& ma) { return std::min(std::max(a, mi), ma); }
 
-float wrapf(float value, float min, float max)
+template<typename T>
+T wrap(T value, T min, T max)
 {
-    float delta = max - min;
+    T delta = max - min;
     while (value >= max) value -= delta;
     while (value <  min) value += delta;
     return value;
 }
-float wrapf(float value, float max) { return wrapf(value, 0, max); }
+template <typename T>
+T wrap(T value, T max) { return wrap<T>(value, 0, max); }
 
-#define FLAG_LEADER (1)
-#define FLAG_HANDED (1 << 1)
+#define FLAG_LEADER 0b001
+#define FLAG_HANDED 0b010
+
+enum state { 
+    FLYING, 
+    TUMBLE, 
+    STUNED, 
+    WALKIN,
+};
 
 struct boid { 
     vec2f pos, vel; 
     unsigned flags;
+    state state;
+    unsigned state_timer;
 };
 
 std::vector<boid> boids(100);
@@ -186,7 +199,7 @@ const int font_height = 14;
 void RenderMessage(SDL_Renderer* renderer, int x, int y, const std::string& text)
 {
     #if __EMSCRIPTEN__
-        return; // FIXME: src parameter invalid
+        return; // FIXME: "src parameter invalid"
     #endif
     static SDL_Texture* font = nullptr;
     if (font == nullptr) {
@@ -222,8 +235,8 @@ void RenderCircle(SDL_Renderer* renderer, float radius, const vec2f& pos)
     for (int i = 0; i < count; i++)
     {
         float angle = (float)i / count * 2 * M_PI;
-        circle[i] = { pos.x + radius * cosf(angle),
-                      pos.y + radius * sinf(angle) };
+        circle[i] = { pos.x + radius * std::cos(angle),
+                      pos.y + radius * std::sin(angle) };
     }
     circle[count] = circle[0];
     SDL_RenderDrawLinesF(renderer, circle, count + 1);
@@ -361,8 +374,8 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
         SDL_SetRenderDrawColor(debug_render, COLOR_ACCEL, 255);
         RenderVec(debug_render, b.pos, accel * debugVecMultiplier);
            
-        char s[200];
-        sprintf(s, "Boid %llu pos(%+4.3f,%+4.3f) vel(%+3.3f,%+3.3f) %+3.3f flags %x", index, b.pos.x, b.pos.y, b.vel.x, b.vel.y, mag(b.vel), b.flags);
+        std::string s = string_format("Boid %zu pos(%+4.3f,%+4.3f) vel(%+3.3f,%+3.3f) %+3.3f flags %x", 
+                                       index, b.pos.x, b.pos.y, b.vel.x, b.vel.y, mag(b.vel), b.flags);
         RenderMessage(debug_render, 10, 13, s);
     } 
 
@@ -414,6 +427,8 @@ void init_boids()
         boid.flags = 0; 
         boid.flags |= rand_bit(generator) << 1; // random left/right handedness
         boid.flags |= (rand_percent(generator) < leaderChance) & 1; // random leader chance
+        boid.state_timer = 0;
+        boid.state = FLYING;
     }
 }
 
@@ -426,17 +441,69 @@ void MoveBoids()
     { edgeObstacle, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle },
     { WINDOW_WIDTH - edgeObstacle, edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle } };
 
+    
     for (std::size_t i = 0; i < boids.size(); i++)
     {
-        vec2f accel = calc_accel(boids, i);
         boid& n = new_boids[i], b = boids[i];
-        n.vel = b.vel + accel;
-        n.pos = b.pos + n.vel;
-        n.pos.x = wrapf(n.pos.x, WINDOW_WIDTH);
-        n.pos.y = wrapf(n.pos.y, WINDOW_HEIGHT);
+        // update flags
         n.flags = b.flags;
-    }
+        n.state = b.state;
+        n.state_timer = b.state_timer;
+        if (n.state_timer) { --n.state_timer; } 
+        
+        switch (n.state) {
+            case TUMBLE:
+                
+                n.vel = b.vel / 2;
+                n.pos = b.pos + n.vel;                
+            
+                if (!n.state_timer) {
+                    n.state = STUNED;
+                    n.state_timer = 120;
+                }
+                break; 
 
+            case STUNED:
+
+                n.pos = b.pos;
+
+                if (!n.state_timer) {
+                    n.state = WALKIN;
+                    n.state_timer = 120;
+                }
+                break;
+
+            case WALKIN:
+
+                n.pos = b.pos;
+                if (n.pos.y > WINDOW_HEIGHT - edgeObstacle) --n.pos.y;
+                
+                if (!n.state_timer) {
+                    n.state = FLYING;
+                    n.state_timer = 0;
+                }
+                break;
+
+            case FLYING:
+                // update position and velocity
+                vec2f accel = calc_accel(boids, i);
+                n.vel = b.vel + accel;
+                n.pos = b.pos + n.vel;
+                n.pos.x = wrap<float>(n.pos.x, WINDOW_WIDTH);
+                n.pos.y = wrap<float>(n.pos.y, WINDOW_HEIGHT);
+                
+                if (!n.state_timer) {
+                    if (n.pos.y < WINDOW_HEIGHT - edgeObstacle) {
+                        n.state = TUMBLE; 
+                        n.state_timer = 60;
+                    }
+                }
+                break;
+        }
+        
+    }
+    
+    // update leadership
     for (std::size_t i = 0; i < new_boids.size(); i++)
     {
         boid& n = new_boids[i];
@@ -461,6 +528,8 @@ void MoveBoids()
                 n.flags |= FLAG_LEADER;
             }
         }
+
+
     }
 
     boids = new_boids;
@@ -516,10 +585,7 @@ int main(int argc, char* argv[])
     #if __EMSCRIPTEN__
     emscripten_set_main_loop(mainLoop, -1, 1);
     #else
-    while (running)
-    {
-        mainLoop();
-    }
+    while (running) mainLoop();
     #endif
 
     cleanup(sdlRenderer, window);
@@ -531,12 +597,16 @@ int main(int argc, char* argv[])
 void mainLoop()
 {
     // Draw the screen
-    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+    if (DEBUG_ENABLE) SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);    
+    else SDL_SetRenderDrawColor(sdlRenderer, COLOR_SKY, SDL_ALPHA_OPAQUE);    
     SDL_RenderClear(sdlRenderer);
+
+    SDL_FRect ground = { 0, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH, edgeObstacle };
+    SDL_RenderFillRectF(sdlRenderer, &ground);
 
     RenderBoids(sdlRenderer);
 
-    #if !__EMSCRIPTEN__
+    #if !__EMSCRIPTEN__ // don't display debug parameters in web
 
     #define STRINGIZE(S) #S
     #define STRING(S) STRINGIZE(S)
@@ -559,7 +629,8 @@ void mainLoop()
     
     SDL_Rect cursor = { (11 + (param_index % param_cols) * (PARAM_WIDTH+1)) * font_width,
                         ((7 + (param_index / param_cols) + (param_index / (2 * param_cols))) * font_height), 
-                        (PARAM_WIDTH+2) * font_width, font_height };
+                        (PARAM_WIDTH+2) * font_width, 
+                        font_height };
     SDL_SetRenderDrawColor(sdlRenderer, COLOR_CURSOR, 255);
     SDL_RenderDrawRect(sdlRenderer, &cursor);
     
