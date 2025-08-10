@@ -41,6 +41,9 @@ struct vec2f
     constexpr operator SDL_FPoint() const { return { x, y }; }
 };
 
+
+std::ostream& operator<<(std::ostream& os, const vec2f& vec) { return os << vec.x << ", " << vec.y; }
+
 constexpr vec2f operator+(vec2f vec1, const vec2f& vec2) { return vec1 += vec2; }
 constexpr vec2f operator-(vec2f vec1, const vec2f& vec2) { return vec1 -= vec2; }
 constexpr vec2f operator/(vec2f vec, float d) { return vec /= d; }

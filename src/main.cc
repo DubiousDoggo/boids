@@ -432,6 +432,9 @@ bool running = true;
 bool advance = true;
 bool step = false;
 
+int zoom = 0;
+vec2f zoom_pos = {0, 0};
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 int main(int argc, char* argv[]) { // args are required for SDL_main
@@ -486,7 +489,6 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
 void mainLoop()
 {
-
     if (advance) {
         // Update boids
         MoveBoids();
@@ -538,7 +540,13 @@ void mainLoop()
     #endif
 
     SDL_SetRenderTarget(sdlRenderer, nullptr);
-    SDL_RenderCopy(sdlRenderer, targetTexture, nullptr, nullptr);
+    const float zoom_sens = 0.25f;
+    float zoom_mul = std::pow(2, zoom * zoom_sens);
+    SDL_Rect zoom_window = { static_cast<int>(zoom_pos.x),
+                             static_cast<int>(zoom_pos.y),
+                             static_cast<int>(WINDOW_WIDTH / zoom_mul),
+                             static_cast<int>(WINDOW_HEIGHT / zoom_mul) };
+    SDL_RenderCopy(sdlRenderer, targetTexture, &zoom_window, nullptr);
     SDL_RenderPresent(sdlRenderer);
 
     // process events
@@ -570,6 +578,31 @@ void mainLoop()
             case SDLK_SPACE: advance = true; break;
             }
             break;
+        case SDL_MOUSEWHEEL: {
+            int mouseX, mouseY;
+            SDL_GetMouseState(&mouseX, &mouseY);            
+            float x_percent = static_cast<float>(mouseX) / WINDOW_WIDTH;
+            float y_percent = static_cast<float>(mouseY) / WINDOW_HEIGHT;
+
+            float prev_zoom_mul = std::pow(2, zoom * zoom_sens);
+            zoom += ev.wheel.y;
+            if (zoom < 0) zoom = 0;
+            float zoom_mul = std::pow(2, zoom * zoom_sens);
+
+            float height_diff = WINDOW_HEIGHT / prev_zoom_mul - WINDOW_HEIGHT / zoom_mul;
+            float width_diff = WINDOW_WIDTH / prev_zoom_mul - WINDOW_WIDTH / zoom_mul;
+
+            zoom_pos.y += height_diff * y_percent;
+            zoom_pos.x += width_diff * x_percent;
+            if (zoom_pos.y < 0) zoom_pos.y = 0;
+            if (zoom_pos.x < 0) zoom_pos.x = 0;
+
+            if (zoom_pos.y + WINDOW_HEIGHT / zoom_mul > WINDOW_HEIGHT) zoom_pos.y = WINDOW_HEIGHT - WINDOW_HEIGHT / zoom_mul;
+            if (zoom_pos.x + WINDOW_WIDTH / zoom_mul > WINDOW_WIDTH) zoom_pos.x = WINDOW_WIDTH - WINDOW_WIDTH / zoom_mul;
+
+            break;
+        }
+            
         }
     }
     #endif
