@@ -9,7 +9,7 @@ CC := D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe # FIXME
 FLAGS := -std=c++17 -Wall -Wextra -Wpedantic -g 
 
 exe: bin/SDLTest.exe
-bin/SDLTest.exe: src/*.cc
+bin/SDLTest.exe: src/*.cc src/*.hh
 	$(CC) $(FLAGS) src/*.cc -o bin/SDLTest.exe -ISDL2/include -LSDL2/lib -lmingw32 -lSDL2main -lSDL2
 
 web: wasm/boids.js wasm/boids.html wasm/boids.wasm

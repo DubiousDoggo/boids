@@ -11,15 +11,17 @@
 #include <sstream>
 #include <random>
 
-
 #include "cleanup.hh"
 #include "resource.hh"
+#include "vec.hh"
+#include "util.hh"
+#include "render.hh"
 
 /* Define window size */
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
 
-unsigned DEBUG_ENABLE = 1;
+unsigned DEBUG_ENABLE = 0;
 
 float minSpeed = 2;
 float maxSpeed = 12;
@@ -66,87 +68,6 @@ const float debugVecMultiplier = 200;
 #define COLOR_LEFT     0, 240,   0 // GREEN
 #define COLOR_RIGHT  255,   0,   0 // RED
 
-struct vec2f
-{
-    float x, y;
-
-    constexpr vec2f& operator+=(const vec2f& vec)
-    {
-        x += vec.x;
-        y += vec.y;
-        return *this;
-    }
-    constexpr vec2f& operator-=(const vec2f& vec)
-    {
-        x -= vec.x;
-        y -= vec.y;
-        return *this;
-    }
-    constexpr vec2f& operator/=(float d)
-    {
-        x /= d;
-        y /= d;
-        return *this;
-    }
-    constexpr vec2f& operator*=(float m)
-    {
-        x *= m;
-        y *= m;
-        return *this;
-    }
-    constexpr vec2f operator-() const
-    {
-        vec2f vec{0, 0};
-        return vec -= *this;
-    }
-
-    constexpr operator SDL_FPoint() const { return { x, y }; }
-};
-
-constexpr vec2f operator+(vec2f vec1, const vec2f& vec2) { return vec1 += vec2; }
-constexpr vec2f operator-(vec2f vec1, const vec2f& vec2) { return vec1 -= vec2; }
-constexpr vec2f operator/(vec2f vec, float d) { return vec /= d; }
-constexpr vec2f operator*(vec2f vec, float m) { return vec *= m; }
-
-constexpr float dist_squared(const vec2f& p1, const vec2f& p2) { return (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y); }
-constexpr float dist(const vec2f& p1, const vec2f& p2) { return std::sqrt(dist_squared(p1, p2)); }
-constexpr float dot(const vec2f& v1, const vec2f& v2) { return v1.x * v2.x + v1.y * v2.y; }
-/** @return the magnitude of the cross product of v1 and v2 */
-constexpr float cross_mag(const vec2f& v1, const vec2f& v2) { return v1.x * v2.y - v1.y * v2.x; } 
-/** @return the projection of v1 onto v2 */
-constexpr vec2f proj(const vec2f& v1, const vec2f& v2) { return v2 * dot(v1, v2) / dot(v2, v2); }
-constexpr float mag(const vec2f& vec) { return sqrtf(vec.x * vec.x + vec.y * vec.y); }
-/** @return vec normalized to a unit vector. if the magnitude of vec is zero, return the zero vector */
-constexpr vec2f normal(const vec2f& vec, const vec2f& zero = { 0, 0 }) { return mag(vec) != 0 ? vec / mag(vec) : zero; }
-constexpr vec2f clamp_mag(const vec2f& vec, float min, float max) { return mag(vec) > max ? normal(vec) * max : mag(vec) < min ? normal(vec) * min : vec; }
-/** @return vec rotated by angle radians */
-constexpr vec2f rotate(const vec2f& vec, float angle) { return { vec.x * std::cos(angle) - vec.y * std::sin(angle), vec.x * std::sin(angle) + vec.y * std::cos(angle) }; }
-
-/** Compute the shortest vector from pos to the interior of rect */
-constexpr vec2f vec_to(vec2f pos, SDL_FRect rect)
-{
-    vec2f result = { 0, 0 };
-    if (pos.x < rect.x) { result.x = rect.x - pos.x; }
-    if (pos.y < rect.y) { result.y = rect.y - pos.y; }
-    if (pos.x > rect.x + rect.w) { result.x = rect.x + rect.w - pos.x; }
-    if (pos.y > rect.y + rect.h) { result.y = rect.y + rect.h - pos.y; }
-    return result;
-}
-
-template <typename T>
-constexpr T clamp(const T& a, const T& mi, const T& ma) { return std::min(std::max(a, mi), ma); }
-
-template<typename T>
-T wrap(T value, T min, T max)
-{
-    T delta = max - min;
-    while (value >= max) value -= delta;
-    while (value <  min) value += delta;
-    return value;
-}
-template <typename T>
-T wrap(T value, T max) { return wrap<T>(value, 0, max); }
-
 #define FLAG_LEADER 0b001
 #define FLAG_HANDED 0b010
 
@@ -167,84 +88,6 @@ struct boid {
 std::vector<boid> boids(100);
 std::vector<SDL_FRect> obstacles;
 
-/**
- * \brief Log an SDL error with some error message to the output stream of our choice
- * format will be message error : SDL_GetError()
- * \param message The error message to write,
- * \param os The output stream to write the message to, cout by default
- */
-void logSDLError(const std::string& message, std::ostream& os = std::cout)
-{
-    os << message << " Error : " << SDL_GetError() << std::endl;
-}
-
-#include <memory>
-#include <string>
-#include <stdexcept>
-template<typename ... Args>
-std::string string_format( const std::string& format, Args ... args )
-{
-    int size_s = std::snprintf( nullptr, 0, format.c_str(), args ... ) + 1; // Extra space for '\0'
-    if( size_s <= 0 ){ throw std::runtime_error( "Error during formatting." ); }
-    auto size = static_cast<size_t>( size_s );
-    auto buf = std::make_unique<char[]>( size );
-    std::snprintf( buf.get(), size, format.c_str(), args ... );
-    return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
-}
-
-void RenderVec(SDL_Renderer* renderer, const vec2f& pos, const vec2f& vec)
-{
-    SDL_FPoint line[]{ pos, pos + vec };
-    SDL_RenderDrawLinesF(renderer, line, 2);
-}
-
-const int font_width = 8;
-const int font_height = 14;
-void RenderMessage(SDL_Renderer* renderer, int x, int y, const std::string& text)
-{
-    #if __EMSCRIPTEN__
-        return; // FIXME: "src parameter invalid"
-    #endif
-    static SDL_Texture* font = nullptr;
-    if (font == nullptr) {
-        if ((font = loadTexture(renderer, "font.bmp")) == nullptr) {
-            logSDLError("loadTexture");
-        }
-    }
-
-    x *= font_width;
-    y *= font_height;
-    SDL_Rect src = { 0, 0, font_width, font_height };
-    SDL_Rect dst = { x, y, font_width, font_height };
-    for (const char& c : text)
-    {
-        if (c == '\n')
-        {
-            dst.x = x;
-            dst.y += font_height;
-        }
-        else
-        {
-            src.x = (c - ' ') * font_width;
-            SDL_RenderCopy(renderer, font, &src, &dst);
-            dst.x += font_width;
-        }
-    }
-}
-
-void RenderCircle(SDL_Renderer* renderer, float radius, const vec2f& pos)
-{
-    const int count = 32;
-    SDL_FPoint circle[count + 1];
-    for (int i = 0; i < count; i++)
-    {
-        float angle = (float)i / count * 2 * M_PI;
-        circle[i] = { pos.x + radius * std::cos(angle),
-                      pos.y + radius * std::sin(angle) };
-    }
-    circle[count] = circle[0];
-    SDL_RenderDrawLinesF(renderer, circle, count + 1);
-}
 
 /** calculate the acceleration of the boid at index, based on neighboring boids */
 vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer* debug_render = nullptr)
@@ -435,7 +278,7 @@ void RenderBoids(SDL_Renderer* renderer)
 std::default_random_engine generator;
 std::uniform_real_distribution<float> rand_percent(0, 1);
 
-void init_boids()
+void InitBoids()
 {
     std::uniform_real_distribution<float> rand_x(edgeObstacle, WINDOW_WIDTH - edgeObstacle);
     std::uniform_real_distribution<float> rand_y(edgeObstacle, WINDOW_HEIGHT - edgeObstacle);
@@ -570,10 +413,12 @@ void MoveBoids()
 
 }
 
+
 void mainLoop();
 
-
 SDL_Renderer* sdlRenderer;
+SDL_Texture* targetTexture;
+
 const int param_rows = 4;
 const int param_cols = 5;
 int param_index = 0;
@@ -604,10 +449,18 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
         return EXIT_FAILURE;
     }
 
-    sdlRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    sdlRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
     if (sdlRenderer == nullptr) {
         cleanup(window);
         logSDLError("CreateRenderer");
+        SDL_Quit();
+        return EXIT_FAILURE;
+    }
+
+    targetTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
+    if (targetTexture == nullptr) {
+        cleanup(window, sdlRenderer);
+        logSDLError("CreateTexture");
         SDL_Quit();
         return EXIT_FAILURE;
     }
@@ -616,7 +469,7 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
         if (params[i] != nullptr) delta[i] = *params[i] * .05f; // adjust by 5% of initial value
     }
 
-    init_boids();
+    InitBoids();
 
 
     #if __EMSCRIPTEN__
@@ -625,7 +478,7 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
     while (running) mainLoop();
     #endif
 
-    cleanup(sdlRenderer, window);
+    cleanup(sdlRenderer, window, targetTexture);
     SDL_Quit();
     return 0;
 }
@@ -633,7 +486,16 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
 void mainLoop()
 {
+
+    if (advance) {
+        // Update boids
+        MoveBoids();
+        if (step) { advance = false; }
+    }
+
     // Draw the screen
+    SDL_SetRenderTarget(sdlRenderer, targetTexture);
+
     if (DEBUG_ENABLE == 2) SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);    
     else SDL_SetRenderDrawColor(sdlRenderer, COLOR_SKY, SDL_ALPHA_OPAQUE);    
     SDL_RenderClear(sdlRenderer);
@@ -675,18 +537,12 @@ void mainLoop()
     }
     #endif
 
-    if (advance) {
-        // Update boids
-        MoveBoids();
-        if (step) { advance = false; }
-    }
-
-
+    SDL_SetRenderTarget(sdlRenderer, nullptr);
+    SDL_RenderCopy(sdlRenderer, targetTexture, nullptr, nullptr);
     SDL_RenderPresent(sdlRenderer);
 
-
-    #if !__EMSCRIPTEN__  // don't process events for the debug screen when running in web
     // process events
+    #if !__EMSCRIPTEN__  // don't process events for the debug screen when running in web
     SDL_Event ev;
     int next_param;
     while (SDL_PollEvent(&ev))
@@ -709,7 +565,7 @@ void mainLoop()
             case SDLK_PLUS:  *params[param_index] += delta[param_index]; break;
             case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
             
-            case SDLK_r: init_boids(); break;
+            case SDLK_r: InitBoids(); break;
             case SDLK_a: step = !step; break;
             case SDLK_SPACE: advance = true; break;
             }
