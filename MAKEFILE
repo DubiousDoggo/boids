@@ -1,6 +1,6 @@
-.PHONY: all boids
+.PHONY: all exe web
 
-all: bin/SDLTest.exe boids
+all: exe web
 
 # if it says emcc doesn't exist, run emsdk_env before make to fix it
 # to fix it permanently, run emsdk activate --permanent
@@ -8,9 +8,10 @@ EMCC := emcc
 CC := D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe # FIXME 
 FLAGS := -std=c++17 -Wall -Wextra -Wpedantic -g 
 
+exe: bin/SDLTest.exe
 bin/SDLTest.exe: src/*.cc
 	$(CC) $(FLAGS) src/*.cc -o bin/SDLTest.exe -ISDL2/include -LSDL2/lib -lmingw32 -lSDL2main -lSDL2
 
-boids: wasm/boids.js wasm/boids.html wasm/boids.wasm
+web: wasm/boids.js wasm/boids.html wasm/boids.wasm
 wasm/boids.js wasm/boids.html wasm/boids.wasm: src/*.cc
 	$(EMCC) src/main.cc -sWASM=1 -sUSE_SDL=2 -sUSE_SDL_IMAGE=2 -O3 -o wasm/boids.js -o wasm/boids.html

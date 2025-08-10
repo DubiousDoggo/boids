@@ -19,7 +19,7 @@
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
 
-bool DEBUG_ENABLE = false;
+unsigned DEBUG_ENABLE = 1;
 
 float minSpeed = 2;
 float maxSpeed = 12;
@@ -35,7 +35,7 @@ float avoidanceRadius = 25;
 float tailwindRadius = 150; 
 float obstacleRadius = 200;
 
-float edgeObstacle = 20;
+float edgeObstacle = 100;
 
 float alignmentWeight = 0.05f;
 float cohesionWeight = 0.005f;
@@ -44,6 +44,8 @@ float tailwindWeight = 0.02f;
 float obstacleWeight = 0.01f;
 
 float leaderChance = 0.01;
+
+const int boid_size = 10;
 
 const float debugVecMultiplier = 200;
 
@@ -106,16 +108,18 @@ constexpr vec2f operator-(vec2f vec1, const vec2f& vec2) { return vec1 -= vec2; 
 constexpr vec2f operator/(vec2f vec, float d) { return vec /= d; }
 constexpr vec2f operator*(vec2f vec, float m) { return vec *= m; }
 
-inline float dist_squared(const vec2f& p1, const vec2f& p2) { return (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y); }
-inline float dist(const vec2f& p1, const vec2f& p2) { return sqrtf(dist_squared(p1, p2)); }
+constexpr float dist_squared(const vec2f& p1, const vec2f& p2) { return (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y); }
+constexpr float dist(const vec2f& p1, const vec2f& p2) { return std::sqrt(dist_squared(p1, p2)); }
 constexpr float dot(const vec2f& v1, const vec2f& v2) { return v1.x * v2.x + v1.y * v2.y; }
 /** @return the magnitude of the cross product of v1 and v2 */
 constexpr float cross_mag(const vec2f& v1, const vec2f& v2) { return v1.x * v2.y - v1.y * v2.x; } 
 /** @return the projection of v1 onto v2 */
 constexpr vec2f proj(const vec2f& v1, const vec2f& v2) { return v2 * dot(v1, v2) / dot(v2, v2); }
 constexpr float mag(const vec2f& vec) { return sqrtf(vec.x * vec.x + vec.y * vec.y); }
-constexpr vec2f normal(const vec2f& vec) { return mag(vec) != 0 ? vec / mag(vec) : vec2f{ 0, 0 }; }
+/** @return vec normalized to a unit vector. if the magnitude of vec is zero, return the zero vector */
+constexpr vec2f normal(const vec2f& vec, const vec2f& zero = { 0, 0 }) { return mag(vec) != 0 ? vec / mag(vec) : zero; }
 constexpr vec2f clamp_mag(const vec2f& vec, float min, float max) { return mag(vec) > max ? normal(vec) * max : mag(vec) < min ? normal(vec) * min : vec; }
+/** @return vec rotated by angle radians */
 constexpr vec2f rotate(const vec2f& vec, float angle) { return { vec.x * std::cos(angle) - vec.y * std::sin(angle), vec.x * std::sin(angle) + vec.y * std::cos(angle) }; }
 
 /** Compute the shortest vector from pos to the interior of rect */
@@ -154,7 +158,7 @@ enum state {
 };
 
 struct boid { 
-    vec2f pos, vel; 
+    vec2f pos, vel, dir; 
     unsigned flags;
     state state;
     unsigned state_timer;
@@ -256,6 +260,8 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
         
         const boid& g = boids[k];
  
+        if (g.state != FLYING) continue;
+    
         if (dist_squared(b.pos, g.pos) <= alignmentRadius * alignmentRadius) {
             alignment_vec += g.vel - b.vel;
             alignment_count++;
@@ -374,8 +380,8 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
         SDL_SetRenderDrawColor(debug_render, COLOR_ACCEL, 255);
         RenderVec(debug_render, b.pos, accel * debugVecMultiplier);
            
-        std::string s = string_format("Boid %zu pos(%+4.3f,%+4.3f) vel(%+3.3f,%+3.3f) %+3.3f flags %x", 
-                                       index, b.pos.x, b.pos.y, b.vel.x, b.vel.y, mag(b.vel), b.flags);
+        std::string s = string_format("Boid %zu pos(%+4.3f,%+4.3f) vel(%+3.3f,%+3.3f) %+3.3f flags %x state %d state timer %u", 
+                                       index, b.pos.x, b.pos.y, b.vel.x, b.vel.y, mag(b.vel), b.flags, b.state, b.state_timer);
         RenderMessage(debug_render, 10, 13, s);
     } 
 
@@ -387,22 +393,39 @@ void RenderBoids(SDL_Renderer* renderer)
     for (std::size_t i = 0; i < boids.size(); i++)
     {
         const boid& boid = boids[i];
-        vec2f direction = normal(boid.vel);
-        const int boid_size = 10;
+        const vec2f& direction = boid.dir;
         SDL_FPoint triangle[3]{ {boid.pos.x + boid_size * (-direction.y - direction.x), boid.pos.y + boid_size * (direction.x - direction.y)},
                                 {boid.pos.x + boid_size * direction.x , boid.pos.y + boid_size * direction.y },
                                 {boid.pos.x + boid_size * (direction.y - direction.x), boid.pos.y + boid_size * (-direction.x - direction.y)} };
         
-        if (DEBUG_ENABLE) {
+        if (DEBUG_ENABLE == 2) {
             if (boid.flags & FLAG_LEADER) SDL_SetRenderDrawColor(renderer, COLOR_LEADER, 255);
             else if (boid.flags & FLAG_HANDED) SDL_SetRenderDrawColor(renderer, COLOR_LEFT, 255);
             else SDL_SetRenderDrawColor(renderer, COLOR_RIGHT, 255);
         } else SDL_SetRenderDrawColor(renderer, COLOR_BOID, 255);
             
         SDL_RenderDrawLinesF(renderer, triangle, 3);
+
+        if (boid.state == STUNED) {
+            const float star_radius = 2;
+            const unsigned star_count = 3;
+            SDL_FRect stars[star_count];
+            vec2f center = boid.pos + vec2f{0, -boid_size * 1.5f};
+            
+            for (unsigned i = 0; i < star_count; i++) {
+                float angle = boid.state_timer + i * 2 * M_PI / star_count;
+                vec2f pos = rotate({0, boid_size}, angle);
+                pos.y /= 2; pos += center;
+                stars[i] = SDL_FRect { pos.x - star_radius, pos.y - star_radius, star_radius, star_radius };
+            }    
+
+            SDL_RenderFillRectsF(renderer, stars, star_count);
+
+        }
+
     }
 
-    if (DEBUG_ENABLE) {
+    if (DEBUG_ENABLE == 2) {
         calc_accel(boids, 0, renderer);
     }
 
@@ -424,6 +447,7 @@ void init_boids()
         boid.pos.y = rand_y(generator);
         boid.vel.x = rand_vel(generator);
         boid.vel.y = rand_vel(generator);
+        boid.dir = normal(boid.vel);
         boid.flags = 0; 
         boid.flags |= rand_bit(generator) << 1; // random left/right handedness
         boid.flags |= (rand_percent(generator) < leaderChance) & 1; // random leader chance
@@ -434,7 +458,7 @@ void init_boids()
 
 void MoveBoids()
 {
-    std::vector<boid> new_boids(boids.size());
+    std::vector<boid> old_boids(boids);
 
     obstacles = { { 0, edgeObstacle, edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle },
     { edgeObstacle, 0, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle },
@@ -444,79 +468,92 @@ void MoveBoids()
     
     for (std::size_t i = 0; i < boids.size(); i++)
     {
-        boid& n = new_boids[i], b = boids[i];
-        // update flags
-        n.flags = b.flags;
-        n.state = b.state;
-        n.state_timer = b.state_timer;
+        boid& n = boids[i];
+
         if (n.state_timer) { --n.state_timer; } 
         
         switch (n.state) {
-            case TUMBLE:
-                
-                n.vel = b.vel / 2;
-                n.pos = b.pos + n.vel;                
-            
+          
+            case FLYING: {
+                // update position and velocity
+                vec2f accel = calc_accel(old_boids, i);
+                n.vel += accel;
+
+                if (n.pos.y < 0 && n.vel.y < 0)
+                    n.vel.y = -n.vel.y;
+
+                n.pos += n.vel;
+                n.dir = normal(n.vel);
+
                 if (!n.state_timer) {
+                    if (n.pos.y > WINDOW_HEIGHT - edgeObstacle) {
+                        n.state = TUMBLE;
+                        n.state_timer = 120; 
+                    }
+                }
+                break;
+            }
+            case TUMBLE: {
+
+                const float friction_coeff = 0.2;
+                n.vel -= n.vel * friction_coeff;
+                n.pos += n.vel;              
+                
+                // if a circle of radius r rolls a distance d, it has rotated d / r radians
+                n.dir = rotate(n.dir, n.vel.x / boid_size); 
+            
+                if (!n.state_timer || mag(n.vel) < 0.5) {
                     n.state = STUNED;
                     n.state_timer = 120;
                 }
                 break; 
-
+            }
             case STUNED:
-
-                n.pos = b.pos;
-
+                
                 if (!n.state_timer) {
+                    n.vel = n.dir;
                     n.state = WALKIN;
-                    n.state_timer = 120;
+                    n.state_timer = 30;
                 }
                 break;
 
-            case WALKIN:
+            case WALKIN: {
 
-                n.pos = b.pos;
-                if (n.pos.y > WINDOW_HEIGHT - edgeObstacle) --n.pos.y;
-                
-                if (!n.state_timer) {
+                n.vel += {0, -0.05};                
+                n.pos += n.vel;
+                n.dir = normal(n.vel);
+
+                if (n.pos.y <= WINDOW_HEIGHT - edgeObstacle) {
                     n.state = FLYING;
-                    n.state_timer = 0;
+                    n.state_timer = 5; // ground invuln time
                 }
                 break;
-
-            case FLYING:
-                // update position and velocity
-                vec2f accel = calc_accel(boids, i);
-                n.vel = b.vel + accel;
-                n.pos = b.pos + n.vel;
-                n.pos.x = wrap<float>(n.pos.x, WINDOW_WIDTH);
-                n.pos.y = wrap<float>(n.pos.y, WINDOW_HEIGHT);
-                
-                if (!n.state_timer) {
-                    if (n.pos.y < WINDOW_HEIGHT - edgeObstacle) {
-                        n.state = TUMBLE; 
-                        n.state_timer = 60;
-                    }
-                }
-                break;
+            }
         }
+
+        n.pos.x = wrap<float>(n.pos.x, WINDOW_WIDTH);
         
     }
     
     // update leadership
-    for (std::size_t i = 0; i < new_boids.size(); i++)
+    for (std::size_t i = 0; i < boids.size(); i++)
     {
-        boid& n = new_boids[i];
+        boid& n = boids[i];
+        if (n.state != FLYING) continue;
         unsigned leader_neighbors = 0;
-        for (std::size_t k = 0; k < new_boids.size(); k++)
+        
+        for (std::size_t k = 0; k < boids.size(); k++)
         {
             if (k == i) continue;
-            const boid& g = new_boids[k];
-            if (dot(normal(n.vel), normal(g.vel)) < 0) continue; // ignore boids traveling in opposite direction
+            const boid& g = boids[k];
+            if (g.state != FLYING) continue;
+
+            if (dot(n.dir, g.dir) < 0) continue; // ignore boids traveling in opposite direction
             if (dist_squared(n.pos, g.pos) <= tailwindRadius * tailwindRadius) { 
                 if (g.flags & FLAG_LEADER) leader_neighbors++;
             }
         }
+        
         if (n.flags & FLAG_LEADER) {
             // lose leadership if theres other leaders
             if (rand_percent(generator) < leader_neighbors * leaderChance) {
@@ -529,10 +566,8 @@ void MoveBoids()
             }
         }
 
-
     }
 
-    boids = new_boids;
 }
 
 void mainLoop();
@@ -552,9 +587,11 @@ bool running = true;
 bool advance = true;
 bool step = false;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+int main(int argc, char* argv[]) { // args are required for SDL_main
+#pragma GCC diagnostic pop
 
-int main(int argc, char* argv[])
-{
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         logSDLError("Init");
         return EXIT_FAILURE;
@@ -597,43 +634,45 @@ int main(int argc, char* argv[])
 void mainLoop()
 {
     // Draw the screen
-    if (DEBUG_ENABLE) SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);    
+    if (DEBUG_ENABLE == 2) SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);    
     else SDL_SetRenderDrawColor(sdlRenderer, COLOR_SKY, SDL_ALPHA_OPAQUE);    
     SDL_RenderClear(sdlRenderer);
 
     SDL_FRect ground = { 0, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH, edgeObstacle };
+    SDL_SetRenderDrawColor(sdlRenderer, COLOR_GROUND, SDL_ALPHA_OPAQUE);    
     SDL_RenderFillRectF(sdlRenderer, &ground);
 
     RenderBoids(sdlRenderer);
 
     #if !__EMSCRIPTEN__ // don't display debug parameters in web
 
-    #define STRINGIZE(S) #S
-    #define STRING(S) STRINGIZE(S)
-    #define PARAM_WIDTH 10
-    #define PARAM_FMT " %" STRING(PARAM_WIDTH) "f"
-    // Render parameters
-    RenderMessage(sdlRenderer, 5, 5, string_format(
-        "Use arrow keys and +/- to edit parameters. Press ~ to toggle debug display, R to reset all boids. A to toggle single step, space to advance\n" 
-        "        ALIGNMENT   COHESION  AVOIDANCE   TAILWIND  OBSTACLE\n"
-        "RADIUS" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
-        "WEIGHT" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
-        "            SPEED      ACCEL              DRAG          EDGE\n"
-        "   MAX" PARAM_FMT PARAM_FMT "           " PARAM_FMT PARAM_FMT "\n"
-        "   MIN" PARAM_FMT PARAM_FMT "\n",
-        alignmentRadius, cohesionRadius, avoidanceRadius, tailwindRadius, obstacleRadius,
-        alignmentWeight, cohesionWeight, avoidanceWeight, tailwindWeight, obstacleWeight,
-        maxSpeed, maxAccel, dragCoeff, edgeObstacle,
-        minSpeed, baseAccel
-    ));
+    if(DEBUG_ENABLE) {
+        #define STRINGIZE(S) #S
+        #define STRING(S) STRINGIZE(S)
+        #define PARAM_WIDTH 10
+        #define PARAM_FMT " %" STRING(PARAM_WIDTH) "f"
+        // Render parameters
+        RenderMessage(sdlRenderer, 5, 5, string_format(
+            "Use arrow keys and +/- to edit parameters. Press ~ to toggle debug display, R to reset all boids. A to toggle single step, space to advance\n" 
+            "        ALIGNMENT   COHESION  AVOIDANCE   TAILWIND  OBSTACLE\n"
+            "RADIUS" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
+            "WEIGHT" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
+            "            SPEED      ACCEL              DRAG          EDGE\n"
+            "   MAX" PARAM_FMT PARAM_FMT "           " PARAM_FMT PARAM_FMT "\n"
+            "   MIN" PARAM_FMT PARAM_FMT "\n",
+            alignmentRadius, cohesionRadius, avoidanceRadius, tailwindRadius, obstacleRadius,
+            alignmentWeight, cohesionWeight, avoidanceWeight, tailwindWeight, obstacleWeight,
+            maxSpeed, maxAccel, dragCoeff, edgeObstacle,
+            minSpeed, baseAccel
+        ));
     
-    SDL_Rect cursor = { (11 + (param_index % param_cols) * (PARAM_WIDTH+1)) * font_width,
-                        ((7 + (param_index / param_cols) + (param_index / (2 * param_cols))) * font_height), 
-                        (PARAM_WIDTH+2) * font_width, 
-                        font_height };
-    SDL_SetRenderDrawColor(sdlRenderer, COLOR_CURSOR, 255);
-    SDL_RenderDrawRect(sdlRenderer, &cursor);
-    
+        SDL_Rect cursor = { (11 + (param_index % param_cols) * (PARAM_WIDTH+1)) * font_width,
+                            ((7 + (param_index / param_cols) + (param_index / (2 * param_cols))) * font_height), 
+                            (PARAM_WIDTH+2) * font_width, 
+                            font_height };
+        SDL_SetRenderDrawColor(sdlRenderer, COLOR_CURSOR, 255);
+        SDL_RenderDrawRect(sdlRenderer, &cursor);
+    }
     #endif
 
     if (advance) {
@@ -659,6 +698,8 @@ void mainLoop()
         case SDL_KEYDOWN:
             switch (ev.key.keysym.sym) {
             
+            case SDLK_BACKQUOTE: DEBUG_ENABLE = (DEBUG_ENABLE + 1) % 3; break;
+            
             case SDLK_UP:    if ((next_param = param_index - param_cols) >= 0                            && params[next_param] != nullptr) param_index = next_param; break;
             case SDLK_DOWN:  if ((next_param = param_index + param_cols) < (param_cols * param_rows - 1) && params[next_param] != nullptr) param_index = next_param; break;
             case SDLK_LEFT:  if ((next_param = param_index - 1) >= 0                                     && params[next_param] != nullptr) param_index = next_param; break;
@@ -668,7 +709,6 @@ void mainLoop()
             case SDLK_PLUS:  *params[param_index] += delta[param_index]; break;
             case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
             
-            case SDLK_BACKQUOTE: DEBUG_ENABLE = !DEBUG_ENABLE; break;
             case SDLK_r: init_boids(); break;
             case SDLK_a: step = !step; break;
             case SDLK_SPACE: advance = true; break;

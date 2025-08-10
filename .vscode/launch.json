@@ -5,11 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "preLaunchTask": "C/C++: g++ build project",
+            "preLaunchTask": "make",
             "name": "(gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}\\SDLTest.exe",
+            "program": "${workspaceFolder}\\bin\\SDLTest.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
