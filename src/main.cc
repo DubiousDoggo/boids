@@ -478,7 +478,33 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
         return EXIT_FAILURE;
     }
 
-    targetTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
+    SDL_RendererInfo rendererInfo;
+    if (SDL_GetRendererInfo(sdlRenderer, &rendererInfo) < 0)
+    {
+        cleanup(window, sdlRenderer);
+        logSDLError("GetRendererInfo");
+        SDL_Quit();
+        return EXIT_FAILURE;
+    }
+
+    const SDL_PixelFormatEnum targetTextureFormat = SDL_PIXELFORMAT_RGB888;
+    bool format_supported = false;
+    for (unsigned i = 0; i < rendererInfo.num_texture_formats; i++) {
+        if (rendererInfo.texture_formats[i] == targetTextureFormat) {
+            format_supported = true;
+            break;
+        }
+    }
+    if (!format_supported) {
+        std::cout << "targetTexture format " << SDL_GetPixelFormatName(targetTextureFormat) << " is unsupported.\n" 
+                  << "supported formats:\n";
+        for (unsigned i = 0; i < rendererInfo.num_texture_formats; i++) {
+            std::cout << '\t' << SDL_GetPixelFormatName(rendererInfo.texture_formats[i]) << '\n';
+        }
+        std::cout << std::flush;
+    }
+
+    targetTexture = SDL_CreateTexture(sdlRenderer, targetTextureFormat, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
     if (targetTexture == nullptr) {
         cleanup(window, sdlRenderer);
         logSDLError("CreateTexture");

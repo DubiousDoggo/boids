@@ -5,8 +5,8 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "preLaunchTask": "make",
             "name": "(gdb) Launch",
+            "preLaunchTask": "make exe",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}\\bin\\SDLTest.exe",
@@ -24,6 +24,6 @@
                     "ignoreFailures": true
                 }
             ]
-        }
+        },
     ]
 }

@@ -16,30 +16,38 @@
 		},
 		{
 			"type": "shell",
-			"label": "C/C++: g++ build distribuatable",
-			"command": "D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe",
+			"label": "make exe",
+			"command": "make",
 			"args": [
-				"-std=c++17",
-				"-Wall",
-				"-Wextra",
-				"-Wpedantic",
-				"-g",
-				"*.cc",
-				"-o",
-				"SDLTest-distribuatable.exe",
-				"-ISDL2\\include",
-				"-LSDL2\\lib",
-				"-lmingw32",
-				"-lSDL2main",
-				"-lSDL2",
-				"-static-libgcc",
-				"-static-libstdc++"
+				"exe"
 			],
-			"options": {},
 			"problemMatcher": [
 				"$gcc"
 			],
 			"group": "build"
+		},
+		{
+			"type": "shell",
+			"label": "make web",
+			"command": "make",
+			"args": [
+				"web"
+			],
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"type": "shell",
+			"label": "emrun Launch",
+			"dependsOn": "make web",
+			"command": "emrun",
+			"args": [
+				"wasm\\boids.html"
+			],
+			"group": "none",
+			"problemMatcher": []
 		}
 	]
 }
