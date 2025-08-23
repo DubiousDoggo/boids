@@ -30,5 +30,10 @@ T wrap(T value, T min, T max)
 template <typename T>
 T wrap(T value, T max) { return wrap<T>(value, 0, max); }
 
+/** linear interpolation */
+template <typename T>
+constexpr T lerp(const T& q1, const T& q2, float t) {
+    return q1 * (1 - t) + q2 * t;
+}
 
-#endif  
+#endif

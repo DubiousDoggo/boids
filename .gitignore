@@ -1,2 +1,4 @@
 SDL2
+wasm/*
+bin/*
 .vscode/settings.json

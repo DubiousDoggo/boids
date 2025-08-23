@@ -13,7 +13,7 @@
 
 #include "cleanup.hh"
 #include "resource.hh"
-#include "vec.hh"
+#include "vec2.hh"
 #include "util.hh"
 #include "render.hh"
 
@@ -242,6 +242,8 @@ void RenderBoids(SDL_Renderer* renderer)
                                 {boid.pos.x + boid_size * direction.x , boid.pos.y + boid_size * direction.y },
                                 {boid.pos.x + boid_size * (direction.y - direction.x), boid.pos.y + boid_size * (-direction.x - direction.y)} };
         
+        
+
         if (DEBUG_ENABLE == 2) {
             if (boid.flags & FLAG_LEADER) SDL_SetRenderDrawColor(renderer, COLOR_LEADER, 255);
             else if (boid.flags & FLAG_HANDED) SDL_SetRenderDrawColor(renderer, COLOR_LEFT, 255);
@@ -264,7 +266,6 @@ void RenderBoids(SDL_Renderer* renderer)
             }    
 
             SDL_RenderFillRectsF(renderer, stars, star_count);
-
         }
 
     }
@@ -458,6 +459,15 @@ vec2f zoom_pos = {0, 0};
 int main(int argc, char* argv[]) { // args are required for SDL_main
 #pragma GCC diagnostic pop
 
+    SDL_version compiled;
+    SDL_version linked;
+    SDL_VERSION(&compiled);
+    SDL_GetVersion(&linked);
+    printf("Compiled against SDL version %d.%d.%d\n",
+             compiled.major, compiled.minor, compiled.patch);
+    printf("Linked against SDL version %d.%d.%d\n",
+            linked.major, linked.minor, linked.patch);
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         logSDLError("Init");
         return EXIT_FAILURE;
@@ -472,42 +482,36 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
     sdlRenderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
     if (sdlRenderer == nullptr) {
-        cleanup(window);
         logSDLError("CreateRenderer");
+        cleanup(window);
         SDL_Quit();
         return EXIT_FAILURE;
     }
 
-    SDL_RendererInfo rendererInfo;
-    if (SDL_GetRendererInfo(sdlRenderer, &rendererInfo) < 0)
-    {
-        cleanup(window, sdlRenderer);
-        logSDLError("GetRendererInfo");
-        SDL_Quit();
-        return EXIT_FAILURE;
-    }
-
-    const SDL_PixelFormatEnum targetTextureFormat = SDL_PIXELFORMAT_RGB888;
-    bool format_supported = false;
-    for (unsigned i = 0; i < rendererInfo.num_texture_formats; i++) {
-        if (rendererInfo.texture_formats[i] == targetTextureFormat) {
-            format_supported = true;
-            break;
+    const SDL_PixelFormatEnum targetTextureFormat = SDL_PIXELFORMAT_RGBA8888;
+    const SDL_TextureAccess targetTextureAccess = SDL_TEXTUREACCESS_TARGET;
+    targetTexture = SDL_CreateTexture(sdlRenderer, targetTextureFormat, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
+    if (targetTexture == nullptr) {
+        logSDLError("CreateTexture");
+        
+        std::cout << "targetTexture format: " << SDL_GetPixelFormatName(targetTextureFormat) << std::endl; 
+        std::cout << "              access: " << targetTextureAccess << std::endl; 
+        
+        SDL_RendererInfo rendererInfo;
+        if (SDL_GetRendererInfo(sdlRenderer, &rendererInfo) < 0) {
+            logSDLError("GetRendererInfo");
+            cleanup(window, sdlRenderer);
+            SDL_Quit();
+            return EXIT_FAILURE;
         }
-    }
-    if (!format_supported) {
-        std::cout << "targetTexture format " << SDL_GetPixelFormatName(targetTextureFormat) << " is unsupported.\n" 
-                  << "supported formats:\n";
+
+        std::cout << "supported formats:\n";
         for (unsigned i = 0; i < rendererInfo.num_texture_formats; i++) {
             std::cout << '\t' << SDL_GetPixelFormatName(rendererInfo.texture_formats[i]) << '\n';
         }
         std::cout << std::flush;
-    }
 
-    targetTexture = SDL_CreateTexture(sdlRenderer, targetTextureFormat, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
-    if (targetTexture == nullptr) {
         cleanup(window, sdlRenderer);
-        logSDLError("CreateTexture");
         SDL_Quit();
         return EXIT_FAILURE;
     }
@@ -520,7 +524,7 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
 
     #if __EMSCRIPTEN__
-    emscripten_set_main_loop(mainLoop, -1, 1);
+    emscripten_set_main_loop(mainLoop, 0, true);
     #else
     while (running) mainLoop();
     #endif
@@ -534,7 +538,6 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 void mainLoop()
 {
     if (advance) {
-        // Update boids
         UpdateBoids();
         if (step) { advance = false; }
     }
@@ -589,12 +592,16 @@ void mainLoop()
     if (follow) {
         zoom_pos.x = boids[0].pos.x - WINDOW_WIDTH * zoom_mul / 2;
         zoom_pos.y = boids[0].pos.y - WINDOW_HEIGHT * zoom_mul / 2;
+        zoom_pos.y = clamp(zoom_pos.y, 0.f, WINDOW_HEIGHT * (1 - zoom_mul));
+        zoom_pos.x = clamp(zoom_pos.x, 0.f, WINDOW_WIDTH * (1 - zoom_mul));
     }
 
     SDL_Rect zoom_window = { static_cast<int>(zoom_pos.x),
                              static_cast<int>(zoom_pos.y),
                              static_cast<int>(WINDOW_WIDTH * zoom_mul),
                              static_cast<int>(WINDOW_HEIGHT * zoom_mul) };
+    
+
     SDL_RenderCopy(sdlRenderer, targetTexture, &zoom_window, nullptr);
     SDL_RenderPresent(sdlRenderer);
 
@@ -641,9 +648,10 @@ void mainLoop()
                 SDL_GetMouseState(&mouseX, &mouseY);            
                 zoom_pos.y += zoom_diff * static_cast<float>(mouseY);
                 zoom_pos.x += zoom_diff * static_cast<float>(mouseX);
-                zoom_pos.y = clamp(zoom_pos.y, 0.f, WINDOW_HEIGHT * (1 - zoom_mul));
-                zoom_pos.x = clamp(zoom_pos.x, 0.f, WINDOW_WIDTH * (1 - zoom_mul));
             }
+
+            zoom_pos.y = clamp(zoom_pos.y, 0.f, WINDOW_HEIGHT * (1 - zoom_mul));
+            zoom_pos.x = clamp(zoom_pos.x, 0.f, WINDOW_WIDTH * (1 - zoom_mul));
 
             break;
         }

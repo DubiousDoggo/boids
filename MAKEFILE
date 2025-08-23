@@ -1,6 +1,6 @@
-.PHONY: all exe web
+.PHONY: all exe web anim
 
-all: exe web
+all: exe web anim
 
 # if it says emcc doesn't exist, run emsdk_env before make to fix it
 # to fix it permanently, run emsdk activate --permanent
@@ -8,10 +8,14 @@ EMCC := emcc
 CC := D:/mingw-w64/x86_64-8.1.0-win32-seh-rt_v6-rev0/mingw64/bin/g++.exe # FIXME 
 FLAGS := -std=c++17 -Wall -Wextra -Wpedantic -g 
 
+anim: bin/anim.exe
+bin/anim.exe: src/animator.cc src/*.hh
+	$(CC) $(FLAGS) src/animator.cc -o bin/anim.exe -ISDL2/include -LSDL2/lib -lmingw32 -lSDL2main -lSDL2
+
 exe: bin/SDLTest.exe
-bin/SDLTest.exe: src/*.cc src/*.hh
-	$(CC) $(FLAGS) src/*.cc -o bin/SDLTest.exe -ISDL2/include -LSDL2/lib -lmingw32 -lSDL2main -lSDL2
+bin/SDLTest.exe: src/main.cc src/*.hh
+	$(CC) $(FLAGS) src/main.cc -o bin/SDLTest.exe -ISDL2/include -LSDL2/lib -lmingw32 -lSDL2main -lSDL2
 
 web: wasm/boids.js wasm/boids.html wasm/boids.wasm
-wasm/boids.js wasm/boids.html wasm/boids.wasm: src/*.cc
-	$(EMCC) src/main.cc -sWASM=1 -sUSE_SDL=2 -sUSE_SDL_IMAGE=2 -O3 -o wasm/boids.js -o wasm/boids.html
+wasm/boids.js wasm/boids.html wasm/boids.wasm: src/main.cc src/*.hh src/shell.html
+	$(EMCC) src/main.cc -sWASM=1 -sUSE_SDL=2 -sUSE_SDL_IMAGE=2 -O3 -o wasm/boids.js -o wasm/boids.html --shell-file src/shell.html -g2

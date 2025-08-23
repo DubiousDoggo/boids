@@ -1,11 +1,14 @@
+8/14/25:
+- SDL3
+
+
+
 6/14/2025:
 - Reorganize [ ]
 - Fork: make a generic node editor.
 	- something kinda like draw.io, but for fixed function pipeline type thing
 	- roll your own CLAY type thing
-	- Quaternions?
-	- Make it connect to the database?
-	
+	- Quaternions? [x] - 8/14/25
 	
 5/27/2025:
 - Compile to WASM [x]

@@ -5,7 +5,7 @@
 #include <SDL2\SDL.h>
 
 #include "resource.hh"
-#include "vec.hh"
+#include "vec2.hh"
 
 /**
  * \brief Log an SDL error with some error message to the output stream of our choice

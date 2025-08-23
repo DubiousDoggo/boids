@@ -1,8 +1,9 @@
-#ifndef VEC_HH
-#define VEC_HH
+#ifndef VEC2_HH
+#define VEC2_HH
 
 #include <SDL2\SDL.h>
 #include <cmath>
+#include <ostream>
 
 struct vec2f
 {
