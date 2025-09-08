@@ -786,8 +786,8 @@ float *params[param_rows * param_cols] = { &alignmentRadius, &cohesionRadius, &a
 float delta[param_rows * param_cols];
 
 bool running = true;
-bool advance = true;
-bool step = false;
+bool do_tick = true;
+bool single_tick = false;
 bool follow = false;
 
 int zoom = 0;
@@ -829,7 +829,8 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
     const SDL_PixelFormatEnum targetTextureFormat = SDL_PIXELFORMAT_RGBA8888;
     const SDL_TextureAccess targetTextureAccess = SDL_TEXTUREACCESS_TARGET;
-    targetTexture = SDL_CreateTexture(sdlRenderer, targetTextureFormat, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
+  
+    targetTexture = SDL_CreateTexture(sdlRenderer, targetTextureFormat, targetTextureAccess, WINDOW_WIDTH, WINDOW_HEIGHT);
     if (targetTexture == nullptr) {
         logSDLError("CreateTexture");
         
@@ -850,9 +851,21 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
         }
         std::cout << std::flush;
 
-        cleanup(window, sdlRenderer);
-        SDL_Quit();
-        return EXIT_FAILURE;
+
+        for (unsigned i = 0; i < rendererInfo.num_texture_formats; i++) {
+            std::cout << "attempting " << SDL_GetPixelFormatName(rendererInfo.texture_formats[i]) << '\n';
+            targetTexture = SDL_CreateTexture(sdlRenderer, rendererInfo.texture_formats[i], targetTextureAccess, WINDOW_WIDTH, WINDOW_HEIGHT);
+            if (targetTexture != nullptr) break;
+        }
+
+        if (targetTexture == nullptr) {
+            std::cout << "failure" << std::endl;
+            cleanup(window, sdlRenderer);
+            SDL_Quit();
+            return EXIT_FAILURE;
+        }
+
+        std::cout << "success" << std::endl;
     }
 
     for (int i = 0; i < param_rows * param_cols; i++) {
@@ -876,10 +889,10 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
 void mainLoop()
 {
-    if (advance) {
+    if (do_tick) {
         UpdateBoids();
         UpdateFish(fishes);
-        if (step) { advance = false; }
+        if (single_tick) { do_tick = false; }
     }
 
     // Draw to the target texture
@@ -981,9 +994,9 @@ void mainLoop()
             case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
             
             case SDLK_r: InitBoids(boids); InitFish(fishes); break;
-            case SDLK_a: step = !step; break;
+            case SDLK_a: single_tick = !single_tick; break;
             case SDLK_f: follow = !follow; break;
-            case SDLK_SPACE: advance = true; break;
+            case SDLK_SPACE: do_tick = true; break;
             }
             break;
         case SDL_MOUSEWHEEL: {

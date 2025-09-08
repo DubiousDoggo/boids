@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
+#include <sstream>
 
 template<typename ... Args>
 std::string string_format( const std::string& format, Args ... args )
@@ -14,6 +15,13 @@ std::string string_format( const std::string& format, Args ... args )
     auto buf = std::make_unique<char[]>( size );
     std::snprintf( buf.get(), size, format.c_str(), args ... );
     return std::string( buf.get(), buf.get() + size - 1 ); // We don't want the '\0' inside
+}
+
+template <typename T>
+std::string to_string( const T& value ) {
+    std::ostringstream ss;
+    ss << value;
+    return ss.str();
 }
 
 template <typename T>
@@ -32,8 +40,8 @@ T wrap(T value, T max) { return wrap<T>(value, 0, max); }
 
 /** linear interpolation */
 template <typename T>
-constexpr T lerp(const T& q1, const T& q2, float t) {
-    return q1 * (1 - t) + q2 * t;
+constexpr T lerp(const T& v1, const T& v2, float t) {
+    return v1 * (1 - t) + v2 * t;
 }
 
 #endif
