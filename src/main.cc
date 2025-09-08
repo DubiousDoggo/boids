@@ -22,7 +22,9 @@ const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
 
 unsigned DEBUG_ENABLE = 0;
+const float debugVecMultiplier = 200;
 
+/* boid parameters */
 float minSpeed = 2;
 float maxSpeed = 12;
 float maxAccel = 5.7f;
@@ -37,8 +39,6 @@ float avoidanceRadius = 25;
 float flockRadius = 150; 
 float obstacleRadius = 200;
 
-float edgeObstacle = 100;
-
 float alignmentWeight = 0.05f;
 float cohesionWeight = 0.005f;
 float avoidanceWeight = 0.05f;
@@ -48,9 +48,16 @@ float obstacleWeight = 0.01f;
 float leaderChance = 0.01;
 float handedChance = 0.001;
 
-const int boid_size = 10;
+float hopChance = 0.01;
 
-const float debugVecMultiplier = 200;
+const int boid_size = 10;
+const int fish_size = 10;
+
+float edgeObstacle = 60;
+float groundHeight = 400;
+float waterHeight = 300;
+
+float gravity = 0.1f;
 
 #define COLOR_CURSOR    255, 255, 255  // WHITE
 #define COLOR_VELOCITY  255,   0, 255  // PURPLE
@@ -68,30 +75,50 @@ const float debugVecMultiplier = 200;
 #define COLOR_LEADER   0, 160, 200 // DEEP BLUE
 #define COLOR_LEFT     0, 240,   0 // GREEN
 #define COLOR_RIGHT  255,   0,   0 // RED
+#define COLOR_WATER    0, 160, 200 // WATER BLUE
+#define COLOR_FISH   255, 255,  10 // GOLDFISH ORANGE
 
 #define FLAG_LEADER 0b001
 #define FLAG_HANDED 0b010
 
-enum state { 
+enum boid_state { 
     FLYING, 
     TUMBLE, 
     STUNED, 
     WALKIN,
 };
 
+enum fish_state {
+    SWIMING,
+    PREPARE,
+    HOPPING,
+};
+
 struct boid { 
     vec2f pos, vel, dir; 
     unsigned flags;
-    state state;
+    boid_state state;
+    unsigned state_timer;
+};
+
+struct fish {
+    vec2f pos, vel, dir; 
+    unsigned flags;
+    fish_state state;
     unsigned state_timer;
 };
 
 std::vector<boid> boids(100);
-std::vector<SDL_FRect> obstacles;
+std::vector<SDL_FRect> boid_obstacles;
 
+std::vector<fish> fishes(100);
+std::vector<SDL_FRect> fish_obstacles;
+
+std::default_random_engine generator;
+std::uniform_real_distribution<float> rand_percent(0, 1);
 
 /** calculate the acceleration of the boid at index, based on neighboring boids */
-vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer* debug_render = nullptr)
+vec2f calc_boid_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer* debug_render = nullptr)
 {
     const boid& b = boids[index];
 
@@ -172,7 +199,7 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
     vec2f obstacle_vec{ 0, 0 };
     
     vec2f closest_vec{INFINITY, INFINITY};
-    for (const SDL_FRect& obstacle : obstacles) {
+    for (const SDL_FRect& obstacle : boid_obstacles) {
         vec2f ob = vec_to(b.pos, obstacle);
         if (mag(ob) > obstacleRadius) continue; // skip if outside obstacle avoidance radius
         if (dot(ob, b.vel) < 0) continue; // skip if not headed toward the obstacle
@@ -211,7 +238,7 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
         SDL_SetRenderDrawColor(debug_render, COLOR_OBSTACLE, 255);
         RenderVec(debug_render, b.pos, obstacle_vec * debugVecMultiplier);
         RenderCircle(debug_render, obstacleRadius, b.pos);
-        for (const SDL_FRect& obstacle : obstacles) {
+        for (const SDL_FRect& obstacle : boid_obstacles) {
             SDL_RenderDrawRectF(debug_render, &obstacle);
         }
 
@@ -232,7 +259,7 @@ vec2f calc_accel(const std::vector<boid>& boids, std::size_t index, SDL_Renderer
     return accel;
 }
 
-void RenderBoids(SDL_Renderer* renderer)
+void RenderBoids(const std::vector<boid>& boids,SDL_Renderer* renderer)
 {
     for (std::size_t i = 0; i < boids.size(); i++)
     {
@@ -271,19 +298,15 @@ void RenderBoids(SDL_Renderer* renderer)
     }
 
     if (DEBUG_ENABLE == 2) {
-        calc_accel(boids, 0, renderer);
+        calc_boid_accel(boids, 0, renderer);
     }
 
 }
 
-
-std::default_random_engine generator;
-std::uniform_real_distribution<float> rand_percent(0, 1);
-
-void InitBoids()
+void InitBoids(std::vector<boid>& boids)
 {
     std::uniform_real_distribution<float> rand_x(edgeObstacle, WINDOW_WIDTH - edgeObstacle);
-    std::uniform_real_distribution<float> rand_y(edgeObstacle, WINDOW_HEIGHT - edgeObstacle);
+    std::uniform_real_distribution<float> rand_y(edgeObstacle, WINDOW_HEIGHT - groundHeight);
     std::uniform_real_distribution<float> rand_vel(-maxSpeed, maxSpeed);
     std::uniform_int_distribution<uint8_t> rand_bit(0, 2);
 
@@ -305,10 +328,12 @@ void UpdateBoids()
 {
     std::vector<boid> old_boids(boids);
 
-    obstacles = { { 0, edgeObstacle, edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle },
-    { edgeObstacle, 0, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle },
-    { edgeObstacle, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle },
-    { WINDOW_WIDTH - edgeObstacle, edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle } };
+    boid_obstacles = { 
+        { 0, edgeObstacle, edgeObstacle, WINDOW_HEIGHT - edgeObstacle - groundHeight }, // left edge
+        { edgeObstacle, 0, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle },  // top edge
+        { edgeObstacle, WINDOW_HEIGHT - groundHeight, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle }, // ground
+        { WINDOW_WIDTH - edgeObstacle, edgeObstacle, WINDOW_HEIGHT - 2 * edgeObstacle, WINDOW_HEIGHT - edgeObstacle - groundHeight }, // right edge
+    };
 
     
     for (std::size_t i = 0; i < boids.size(); i++)
@@ -321,7 +346,7 @@ void UpdateBoids()
           
             case FLYING: {
                 // update position and velocity
-                vec2f accel = calc_accel(old_boids, i);
+                vec2f accel = calc_boid_accel(old_boids, i);
                 n.vel += accel;
 
                 if (n.pos.y < 0 && n.vel.y < 0)
@@ -331,7 +356,7 @@ void UpdateBoids()
                 n.dir = normal(n.vel);
 
                 if (!n.state_timer) {
-                    if (n.pos.y > WINDOW_HEIGHT - edgeObstacle) {
+                    if (n.pos.y > WINDOW_HEIGHT - groundHeight) {
                         n.state = TUMBLE;
                         n.state_timer = 120; 
                     }
@@ -368,7 +393,7 @@ void UpdateBoids()
                 n.pos += n.vel;
                 n.dir = normal(n.vel);
 
-                if (n.pos.y <= WINDOW_HEIGHT - edgeObstacle) {
+                if (n.pos.y <= WINDOW_HEIGHT - groundHeight) {
                     n.state = FLYING;
                     n.state_timer = 5; // ground invuln time
                 }
@@ -430,6 +455,320 @@ void UpdateBoids()
     }
 
 }
+
+/** calculate the acceleration of the fish at index, based on neighboring fish */
+vec2f calc_fish_accel(const std::vector<fish>& fishes, std::size_t index, SDL_Renderer* debug_render = nullptr)
+{
+    const fish& b = fishes[index];
+
+    vec2f alignment_vec{ 0, 0 }, cohesion_vec{ 0, 0 }, avoidance_vec{ 0, 0 }, flock_vec{ 0, 0 };
+    int alignment_count = 0, cohesion_count = 0, avoidance_count = 0, flock_count = 0;
+    
+    for (std::size_t k = 0; k < fishes.size(); k++)
+    {
+        if (k == index) continue;
+        
+        const fish& g = fishes[k];
+ 
+        if (g.state != SWIMING) continue;
+    
+        if (dist_squared(b.pos, g.pos) <= alignmentRadius * alignmentRadius) {
+            alignment_vec += g.vel - b.vel;
+            alignment_count++;
+        }
+        if (dist_squared(b.pos, g.pos) <= cohesionRadius * cohesionRadius) {
+            cohesion_vec += g.pos - b.pos;
+            cohesion_count++;
+        }
+        if (dist_squared(b.pos, g.pos) <= avoidanceRadius * avoidanceRadius) {
+            if ((b.flags & FLAG_LEADER) && !(g.flags & FLAG_LEADER)) { // let leaders pass to the front
+                avoidance_vec += normal(b.vel) * (avoidanceRadius - mag(b.pos - g.pos));
+            } else {
+                avoidance_vec += normal(b.pos - g.pos) * (avoidanceRadius - mag(b.pos - g.pos));
+            }
+            avoidance_count++;
+        }
+        if (dist_squared(b.pos, g.pos) <= flockRadius * flockRadius) { 
+
+            if (!(g.flags & FLAG_LEADER)) continue; // only flock on leaders
+            if (dot(b.dir, g.dir) < 0) continue; // ignore boids not traveling in the same direction
+
+            vec2f tail = -g.dir; // vec backwards from g
+            vec2f g_to_b = b.pos - g.pos;  // vec from g to b
+            vec2f rej;
+            if (dot(g_to_b, g.dir) > 0) { // fall behind leader
+                vec2f p = proj(g_to_b, tail);
+                rej = p;
+            } else { // attempt to make a triangular looking flock
+                float rot = flockAngle * (b.flags & FLAG_HANDED ? 1 : -1);
+                tail = rotate(tail, rot); // rotate tail vector in handedness of b
+                vec2f p = proj(g_to_b, tail);
+                rej = g_to_b - p; // rejection from tail vector to b
+            }
+
+            float tmp = mag(rej) - .75 * flockRadius;
+            rej = normal(rej) * ((-1 / (.75 * flockRadius)) * tmp * tmp + (flockRadius * .75));
+            flock_vec += -rej; // move b towards tail vector
+            flock_count++;
+
+            if (debug_render != nullptr)
+            {
+                SDL_SetRenderDrawColor(debug_render, COLOR_LEADER, 255);
+                RenderVec(debug_render, g.pos, tail * flockRadius);
+            }
+        }
+    }
+
+    if (alignment_count > 0) {
+        alignment_vec /= alignment_count; 
+        alignment_vec *= alignmentWeight;
+    }
+    if (cohesion_count > 0) {
+        cohesion_vec /= cohesion_count;
+        cohesion_vec *= cohesionWeight;            
+    }
+    if (avoidance_count > 0) {
+        avoidance_vec *= avoidanceWeight;    
+    }
+    if (flock_count > 0) {
+        flock_vec /= flock_count;
+        flock_vec *= flockWeight;
+    }
+
+    vec2f obstacle_vec{ 0, 0 };
+    
+    vec2f closest_vec{INFINITY, INFINITY};
+    for (const SDL_FRect& obstacle : fish_obstacles) {
+        vec2f ob = vec_to(b.pos, obstacle);
+        if (mag(ob) > obstacleRadius) continue; // skip if outside obstacle avoidance radius
+        if (dot(ob, b.vel) < 0) continue; // skip if not headed toward the obstacle
+        if (mag(ob) < mag(closest_vec)) closest_vec = ob;
+    }
+    if (mag(closest_vec) != INFINITY) {
+        obstacle_vec += -normal(closest_vec - proj(closest_vec, b.vel)) * (obstacleRadius - mag(closest_vec)); 
+    }
+
+    obstacle_vec *= obstacleWeight;
+
+    vec2f drag_vec = -b.vel * mag(b.vel) * dragCoeff;
+    vec2f base_vec = normal(b.vel) * baseAccel;
+
+    // accelerate
+    vec2f accel = alignment_vec + cohesion_vec + avoidance_vec + flock_vec + obstacle_vec + drag_vec + base_vec; 
+    
+    if (debug_render != nullptr)
+    {
+        SDL_SetRenderDrawColor(debug_render, COLOR_ALIGNMENT, 255);
+        RenderVec(debug_render, b.pos, alignment_vec * debugVecMultiplier);
+        RenderCircle(debug_render, alignmentRadius, b.pos);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_COHESION, 255);
+        RenderVec(debug_render, b.pos, cohesion_vec * debugVecMultiplier);
+        RenderCircle(debug_render, cohesionRadius, b.pos);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_AVOIDANCE, 255);
+        RenderVec(debug_render, b.pos, avoidance_vec * debugVecMultiplier);
+        RenderCircle(debug_render, avoidanceRadius, b.pos);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_FLOCK, 255);
+        RenderVec(debug_render, b.pos, flock_vec * debugVecMultiplier);
+        RenderCircle(debug_render, flockRadius, b.pos);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_OBSTACLE, 255);
+        RenderVec(debug_render, b.pos, obstacle_vec * debugVecMultiplier);
+        RenderCircle(debug_render, obstacleRadius, b.pos);
+        for (const SDL_FRect& obstacle : fish_obstacles) {
+            SDL_RenderDrawRectF(debug_render, &obstacle);
+        }
+
+        SDL_SetRenderDrawColor(debug_render, COLOR_DRAG, 255);
+        RenderVec(debug_render, b.pos, drag_vec * debugVecMultiplier);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_VELOCITY, 255);
+        RenderVec(debug_render, b.pos, base_vec * debugVecMultiplier);
+        
+        SDL_SetRenderDrawColor(debug_render, COLOR_ACCEL, 255);
+        RenderVec(debug_render, b.pos, accel * debugVecMultiplier);
+           
+        // std::string s = string_format("Fish %zu pos(%+4.3f,%+4.3f) vel(%+3.3f,%+3.3f) %+3.3f flags %x state %d state timer %u", 
+        //                                index, b.pos.x, b.pos.y, b.vel.x, b.vel.y, mag(b.vel), b.flags, b.state, b.state_timer);
+        // RenderMessage(debug_render, 10, 13, s);
+    } 
+
+    return accel;
+}
+
+void RenderFish(const std::vector<fish>& fishes,SDL_Renderer* renderer)
+{
+    for (std::size_t i = 0; i < fishes.size(); i++)
+    {
+        const fish& fish = fishes[i];
+        const vec2f& direction = fish.dir;
+        SDL_FPoint triangle[3]{ {fish.pos.x + boid_size * (-direction.y - direction.x), fish.pos.y + boid_size * (direction.x - direction.y)},
+                                {fish.pos.x + boid_size * direction.x , fish.pos.y + boid_size * direction.y },
+                                {fish.pos.x + boid_size * (direction.y - direction.x), fish.pos.y + boid_size * (-direction.x - direction.y)} };
+        
+        
+
+        if (DEBUG_ENABLE == 2) {
+            if (fish.flags & FLAG_LEADER) SDL_SetRenderDrawColor(renderer, COLOR_LEADER, 255);
+            else if (fish.flags & FLAG_HANDED) SDL_SetRenderDrawColor(renderer, COLOR_LEFT, 255);
+            else SDL_SetRenderDrawColor(renderer, COLOR_RIGHT, 255);
+        } else SDL_SetRenderDrawColor(renderer, COLOR_FISH, 255);
+            
+        SDL_RenderDrawLinesF(renderer, triangle, 3);
+
+    }
+
+    if (DEBUG_ENABLE == 2) {
+        calc_fish_accel(fishes, 0, renderer);
+    }
+
+}
+
+void InitFish(std::vector<fish>& fishes)
+{
+    std::uniform_real_distribution<float> rand_x(edgeObstacle, WINDOW_WIDTH - edgeObstacle);
+    std::uniform_real_distribution<float> rand_y(WINDOW_HEIGHT - waterHeight, WINDOW_HEIGHT - edgeObstacle);
+    std::uniform_real_distribution<float> rand_vel(-maxSpeed, maxSpeed);
+    std::uniform_int_distribution<uint8_t> rand_bit(0, 2);
+
+    for (fish& fish : fishes) {
+        fish.pos.x = rand_x(generator);
+        fish.pos.y = rand_y(generator);
+        fish.vel.x = rand_vel(generator);
+        fish.vel.y = rand_vel(generator);
+        fish.dir = normal(fish.vel);
+        fish.flags = 0; 
+        fish.flags |= rand_bit(generator) << 1; // random left/right handedness
+        fish.flags |= (rand_percent(generator) < leaderChance) & 1; // random leader chance
+        fish.state_timer = 0;
+        fish.state = SWIMING;
+    }
+}
+
+void UpdateFish(std::vector<fish>& fishes)
+{
+
+    std::vector<fish> old_fishes(fishes);
+
+    fish_obstacles = { 
+        { edgeObstacle, WINDOW_HEIGHT - waterHeight - edgeObstacle, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle }, // top edge
+        { 0, WINDOW_HEIGHT - waterHeight, edgeObstacle, waterHeight - edgeObstacle }, // left edge
+        { WINDOW_WIDTH - edgeObstacle, WINDOW_HEIGHT - waterHeight, edgeObstacle, waterHeight - edgeObstacle }, // right edge
+        { edgeObstacle, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH - 2 * edgeObstacle, edgeObstacle }, // bottom edge
+    };
+
+    
+    for (std::size_t i = 0; i < fishes.size(); i++)
+    {
+        fish& n = fishes[i];
+
+        if (n.state_timer) { --n.state_timer; } 
+        
+        switch (n.state) {
+          
+            case SWIMING: {
+                // update position and velocity
+                vec2f accel = calc_fish_accel(old_fishes, i);
+                n.vel += accel;
+
+                if (n.pos.y > WINDOW_HEIGHT && n.vel.y > 0)
+                    n.vel.y = -n.vel.y;
+
+                n.pos += n.vel;
+                n.dir = normal(n.vel);
+
+                if (n.pos.y < WINDOW_HEIGHT - waterHeight) {
+                    n.state = HOPPING;
+                }
+
+                if (!n.state_timer) {
+                    if (rand_percent(generator) < hopChance) {
+                        n.state = PREPARE;
+                    }
+                }
+                break;
+            }
+            case PREPARE: {
+                
+                // swim upwards fast
+                n.vel.y += -gravity * 2;
+                n.pos += n.vel;
+                n.dir = normal(n.vel);
+            
+                if (n.pos.y < WINDOW_HEIGHT - waterHeight) {
+                    n.state = HOPPING;
+                }
+                break; 
+            }
+            case HOPPING:
+                n.vel += { 0, gravity };
+                n.pos += n.vel;
+
+                if (n.pos.y > WINDOW_HEIGHT - waterHeight) {
+                    n.state = SWIMING;
+                    n.state_timer = 300; // hop cooldown
+                }
+                break;
+
+        }
+
+        n.pos.x = wrap<float>(n.pos.x, WINDOW_WIDTH);
+        
+    }
+    
+    // update flags
+    for (std::size_t i = 0; i < fishes.size(); i++)
+    {
+        fish& n = fishes[i];
+        if (n.state != SWIMING) continue;
+        unsigned leader_neighbors = 0;
+        int handed_disparity = 0;
+        
+        for (std::size_t k = 0; k < fishes.size(); k++)
+        {
+            if (k == i) continue;
+            const fish& g = fishes[k];
+            if (g.state != SWIMING) continue;
+
+            if (dot(n.dir, g.dir) < 0) continue; // ignore boids traveling in opposite direction
+            if (dist_squared(n.pos, g.pos) <= flockRadius * flockRadius) { 
+                if (g.flags & FLAG_LEADER) leader_neighbors++;
+                handed_disparity += g.flags & FLAG_HANDED ? 1 : -1;
+            }
+        }
+        
+        if (n.flags & FLAG_HANDED) {
+            if (handed_disparity > 0) {
+                if (rand_percent(generator) < handed_disparity * handedChance) {
+                    n.flags &= ~FLAG_HANDED;   
+                }
+            }
+        } else {
+            if (handed_disparity < 0) {
+                if (rand_percent(generator) < -handed_disparity * handedChance) {
+                    n.flags |= FLAG_HANDED;   
+                }
+            }
+        }
+
+        if (n.flags & FLAG_LEADER) {
+            // lose leadership if theres other leaders
+            if (rand_percent(generator) < leader_neighbors * leaderChance) {
+                n.flags &= ~FLAG_LEADER;
+            }
+        } else {
+            // gain leadership if there are none
+            if (leader_neighbors == 0 && rand_percent(generator) < leaderChance) {
+                n.flags |= FLAG_LEADER;
+            }
+        }
+
+    }
+
+}
+
 
 
 void mainLoop();
@@ -520,8 +859,8 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
         if (params[i] != nullptr) delta[i] = *params[i] * .05f; // adjust by 5% of initial value
     }
 
-    InitBoids();
-
+    InitBoids(boids);
+    InitFish(fishes);
 
     #if __EMSCRIPTEN__
     emscripten_set_main_loop(mainLoop, 0, true);
@@ -539,21 +878,33 @@ void mainLoop()
 {
     if (advance) {
         UpdateBoids();
+        UpdateFish(fishes);
         if (step) { advance = false; }
     }
 
-    // Draw the screen
+    // Draw to the target texture
     SDL_SetRenderTarget(sdlRenderer, targetTexture);
 
+    // Draw sky
     if (DEBUG_ENABLE == 2) SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);    
     else SDL_SetRenderDrawColor(sdlRenderer, COLOR_SKY, SDL_ALPHA_OPAQUE);    
     SDL_RenderClear(sdlRenderer);
 
-    SDL_FRect ground = { 0, WINDOW_HEIGHT - edgeObstacle, WINDOW_WIDTH, edgeObstacle };
+    if (DEBUG_ENABLE != 2) {
+    // Draw ground
+    SDL_FRect ground = { 0, WINDOW_HEIGHT - groundHeight, WINDOW_WIDTH, groundHeight };
     SDL_SetRenderDrawColor(sdlRenderer, COLOR_GROUND, SDL_ALPHA_OPAQUE);    
     SDL_RenderFillRectF(sdlRenderer, &ground);
 
-    RenderBoids(sdlRenderer);
+    // Draw water
+    SDL_FRect water = { 0, WINDOW_HEIGHT - waterHeight, WINDOW_WIDTH, waterHeight };
+    SDL_SetRenderDrawColor(sdlRenderer, COLOR_WATER, SDL_ALPHA_OPAQUE);
+    SDL_RenderFillRectF(sdlRenderer, &water);
+    }
+
+    // Draw boids
+    RenderBoids(boids, sdlRenderer);
+    RenderFish(fishes, sdlRenderer);
 
     #if !__EMSCRIPTEN__ // don't display debug parameters in web
 
@@ -629,7 +980,7 @@ void mainLoop()
             case SDLK_PLUS:  *params[param_index] += delta[param_index]; break;
             case SDLK_MINUS: *params[param_index] -= delta[param_index]; break;
             
-            case SDLK_r: InitBoids(); break;
+            case SDLK_r: InitBoids(boids); InitFish(fishes); break;
             case SDLK_a: step = !step; break;
             case SDLK_f: follow = !follow; break;
             case SDLK_SPACE: advance = true; break;
