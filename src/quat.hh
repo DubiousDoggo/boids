@@ -59,6 +59,9 @@ struct quaternion {
 
 };
 
+std::ostream& operator<<(std::ostream& os, const quaternion& quat) { 
+    return os << quat.w << ", " << quat.x << ", " << quat.y << ", " << quat.z; 
+}
 
 constexpr quaternion operator+(quaternion q1, const quaternion& q2) { return q1 += q2; }
 constexpr quaternion operator-(quaternion q1, const quaternion& q2) { return q1 -= q2; }

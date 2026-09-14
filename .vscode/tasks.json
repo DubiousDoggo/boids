@@ -40,6 +40,18 @@
 		},
 		{
 			"type": "shell",
+			"label": "make anim",
+			"command": "make",
+			"args": [
+				"anim"
+			],
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"type": "shell",
 			"label": "emrun Launch",
 			"dependsOn": "make web",
 			"command": "emrun",

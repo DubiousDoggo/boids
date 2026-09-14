@@ -69,12 +69,12 @@ std::vector<object> objects{
 			{
 				{ 0, 0, 5 },
 				quaternion::axis_angle({ 0, 1, 0 }, 0),
-				10,
+				120,
 			},
 			{
 				{ 1, 1, 5 },
-				quaternion::axis_angle({ 0, 1, 0 }, M_PI),
-				10,
+				quaternion::axis_angle({ 0, 1, 0 }, M_PI / 2),
+				120,
 			}
 		},
 	}
@@ -103,6 +103,16 @@ std::vector<object> objects{
 // 	SET LINE=$PIECE(PIECE,"^",7)
 // 	QUIT
 
+template <typename T>
+struct param {
+	T* param;
+	std::string name;
+	unsigned column;
+	T increment;
+	T min;
+	T max;
+	unsigned line;
+};
 
 // LOADSCENE(NAME,OBJECTS) ;
 // 	NEW LIST ;
@@ -131,6 +141,8 @@ std::vector<object> objects{
 // 	QUIT
 // 	;
 
+int DEBUG_MODE = 0;
+
 
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
@@ -138,7 +150,7 @@ const int WINDOW_HEIGHT = 1080;
 void init();
 void mainLoop();
 void tick();
-void Render(SDL_Renderer* sdlRenderer);
+void render(SDL_Renderer* sdlRenderer);
 void hud(SDL_Renderer* sdlRenderer);
 
 SDL_Renderer* sdlRenderer;
@@ -154,8 +166,9 @@ SDL_Texture* targetTexture;
 // float delta[param_rows * param_cols];
 
 bool running = true;
-bool advance = false;
-bool step = true;
+bool do_tick = true;
+bool single_tick = false;
+unsigned tick_count = 0;
 
 int zoom = 0;
 vec2f zoom_pos = { 0, 0 };
@@ -172,15 +185,14 @@ vec2f zoom_pos = { 0, 0 };
 bool pause = false, prev = false, next = false;
 // 	new input,char,pause,next,prev,add,save,load
 bool quit, skip;
-unsigned sel, obj;
+unsigned sel, obj = 0;
 std::vector<unsigned> updated;
-// 	new params,i
 // 	set obj=1,sel=1
 // 	;
 
 // 	
-float vscale = WINDOW_HEIGHT; // ; window scale
-float hscale = WINDOW_WIDTH;
+float vscale = std::min(WINDOW_HEIGHT, WINDOW_WIDTH); // ; window scale
+float hscale = std::min(WINDOW_HEIGHT, WINDOW_WIDTH);
 float zclip = 0.01; // distance from camera to near clip plane
 
 
@@ -188,8 +200,6 @@ float zclip = 0.01; // distance from camera to near clip plane
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 int main(int argc, char* argv[]) { // args are required for SDL_main
 #pragma GCC diagnostic pop
-
-
 
 	SDL_version compiled;
 	SDL_version linked;
@@ -230,8 +240,6 @@ int main(int argc, char* argv[]) { // args are required for SDL_main
 
 	init();
 
-	
-
 #if __EMSCRIPTEN__
 	emscripten_set_main_loop(mainLoop, 0, true);
 #else
@@ -250,34 +258,30 @@ void init()
 
 void mainLoop()
 {
-	if (advance) {
+	if (do_tick) {
 		tick();
-		if (step) { advance = false; }
+		tick_count++;
+		if (single_tick) { do_tick = false; }
 	}
 
-	// Draw the screen
+	// Draw the screen to the target texture
 	SDL_SetRenderTarget(sdlRenderer, targetTexture);
+	render(sdlRenderer);
 
-	SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-	SDL_RenderClear(sdlRenderer);
-
-	Render(sdlRenderer);
-
+	// Draw the target texture to the screen, scaled with zoom
 	SDL_SetRenderTarget(sdlRenderer, nullptr);
-
 	const float zoom_sens = 0.25f;
 	float zoom_mul = std::pow(2.f, -zoom * zoom_sens);
 	SDL_Rect zoom_window = { static_cast<int>(zoom_pos.x),
 							 static_cast<int>(zoom_pos.y),
 							 static_cast<int>(WINDOW_WIDTH * zoom_mul),
 							 static_cast<int>(WINDOW_HEIGHT * zoom_mul) };
-
 	SDL_RenderCopy(sdlRenderer, targetTexture, &zoom_window, nullptr);
 
+	// Draw the HUD to the screen
 	hud(sdlRenderer);
 
 	SDL_RenderPresent(sdlRenderer);
-
 }
 
 // 	;
@@ -300,38 +304,44 @@ void tick() {
 		// advance the animation
 		if (!pause || next || prev) {
 
-			if (!pause) --object.frame_timer; // count down the frame timer
-			if (pause && next) {
-				next = false;
-				object.frame_timer = 0; // advance to next keyframe
-			}
-			if (pause && prev) {
-				prev = false;
-				// if mid-frame and prev pressed, jump to start of keyframe
-				if (object.frame_timer < object.keyframes[object.keyframe].frame_time) {
-					object.frame_timer = object.keyframes[object.keyframe].frame_time;
-				}
-				else { // otherwise go back 1 keyframe
-					if (object.keyframe > 0) object.keyframe--;
-					else object.keyframe = object.keyframes.size() - 1; // loop back to the end if needed
-					object.frame_timer = object.keyframes[object.keyframe].frame_time; // load the frame timer from the keyframe time
+			if (!pause && object.frame_timer > 0) --object.frame_timer; // advance the frame timer
+			
+			if (pause) {
+				if (next) {
+					next = false;
+					object.frame_timer = 0; // advance to next keyframe
 				}
 
+				if (prev) {
+					prev = false;
+				
+					// if mid-frame and prev pressed, jump to start of keyframe
+					if (object.frame_timer < object.keyframes[object.keyframe].frame_time) {
+						object.frame_timer = object.keyframes[object.keyframe].frame_time;
+					} else { // otherwise go back 1 keyframe
+						if (object.keyframe > 0) object.keyframe--;
+						else object.keyframe = object.keyframes.size() - 1; // loop back to the end if needed
+						object.frame_timer = object.keyframes[object.keyframe].frame_time; // load the frame timer from the keyframe time
+					}
+					
+				}
 			}
-			if (object.frame_timer <= 0) {  // if it hit zero
-				object.keyframe++; // advance to the next keyframe
-				if (object.keyframe >= object.keyframes.size()) object.keyframe = 0; // loop animation
-				object.frame_timer = object.keyframes[object.keyframe].frame_time; // load the frame timer from the keyframe time
-			}
-
-			// update position and rotation
-			unsigned frame = object.keyframe;
-			unsigned nextframe = frame + 1;
-			if (nextframe > object.keyframes.size()) nextframe = 0;
-			float t = static_cast<float>(object.frame_timer) / object.keyframes[frame].frame_time;
-			object.position = lerp(object.keyframes[frame].pos, object.keyframes[nextframe].pos, 1 - t);
-			object.transform = onlerp(object.keyframes[frame].transform, object.keyframes[nextframe].transform, 1 - t);
+	
 		}
+
+		if (object.frame_timer == 0) {  // if it hit zero
+			object.keyframe++; // advance to the next keyframe
+			if (object.keyframe >= object.keyframes.size()) object.keyframe = 0; // loop animation
+			object.frame_timer = object.keyframes[object.keyframe].frame_time; // load the frame timer from the keyframe time
+		}
+
+		// update position and rotation
+		unsigned frame = object.keyframe;
+		unsigned nextframe = frame + 1;
+		if (nextframe >= object.keyframes.size()) nextframe = 0;
+		float t = static_cast<float>(object.frame_timer) / object.keyframes[frame].frame_time;
+		object.position = lerp(object.keyframes[frame].pos, object.keyframes[nextframe].pos, 1 - t);
+		object.transform = onlerp(object.keyframes[frame].transform, object.keyframes[nextframe].transform, 1 - t);
 	}
 }
 
@@ -352,7 +362,11 @@ void drawline(SDL_Renderer* sdlRenderer, vertex v1, vertex v2) {
 }
 
 
-void Render(SDL_Renderer* sdlRenderer) {
+void render(SDL_Renderer* sdlRenderer) {
+
+	SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+	SDL_RenderClear(sdlRenderer);
+
 	for (const object& object : objects) {
 
 		// render the object
@@ -390,29 +404,50 @@ void Render(SDL_Renderer* sdlRenderer) {
 			}
 		}
 
-	}
+	} 
 
 }
 
-
+// DISPLAY THE HUD AND HANDLE INPUT
 void hud(SDL_Renderer* sdlRenderer) {
 
+	RenderMessage(sdlRenderer, 1, 0, string_format("tick: %u  obj: %u  kf: %u  t: %u  objq: %s  objp: %s", tick_count, obj,
+		 objects[obj].keyframe, objects[obj].frame_timer, to_string(objects[obj].transform).c_str(), to_string(objects[obj].position).c_str()));
+	
+	std::ostringstream ss;
+	ss << "Q - Quit" << "  ";
+	ss << "P - " << (pause ? "Unpause" : "Pause") << "  "; 
+   
+	if (pause) {
+		ss << "[ - Prev Keyframe" << "  ";
+	    ss << "] - Next Keyframe" << "  ";
+		ss << "; - Prev Frame" << "  ";
+		ss << "' - Next Frame" << "  ";
+		ss << "A - Add Keyframe" << "  ";
+	} 
 
-	// 	. if pause do
-	// 	. . write *27,"[",3,"h","rotate current keyframe: h/k - yaw  u/j - pitch  y/i - roll"
-	// 	. ; handle input and hud elements
+ 	ss << "1 - Toggle Tick Advance" << "  ";
+	if (single_tick) ss << "SPACE - Advance 1 tick" << "  "; 
+	else if (!do_tick) ss << "SPACE - Start Ticking" << "  ";
+	 
+	RenderMessage(sdlRenderer, 1, 1, ss.str());
+
+	if (pause) {
+		RenderMessage(sdlRenderer, 1, 3, "rotate current keyframe: h/k - yaw  u/j - pitch  y/i - roll");
+	
+	
 
 	// 	. kill input,updated
 
-	// 	. for  read *char:0 quit:char=-1  set input=input+1,input(input)=char,input(input,"key")=$key ; read input buffer 1 char at a time
-	// 	. ;
-	// 	. do hotkeybar(1,$name(quit)_";"_$name(save)_";"_$name(load)_";"_$name(pause)_$s(pause:";"_$name(prev)_"^[prev kf;"_$name(next)_"^]next kf;"_$name(add)_"^add kf",1:""),.input)
 	// 	. ;
 	// 	. do statusbar(height-2,$name(objects(obj,"f"))_"^keyframe^1;"_$name(objects(obj,"t"))_"^time^15;")
 	// 	. ;
 	// 	. set objp=$name(objects(obj,"a",objects(obj,"f"),"p"))
 	// 	. set params=$name(obj)_"^^1^1^1^"_objects_$s(pause:";"_$name(objects(obj,"a",objects(obj,"f"),"t"))_"^frametime^8^1^1;"_objp_"$1^x^25^1;"_objp_"$2^y^30^1;"_objp_"$3^z^35^1",1:"")
 	// 	. do paramsbar(2,params,.sel,.input,.updated)
+	}
+
+	
 
 	quaternion& objq = objects[obj].keyframes[objects[obj].keyframe].transform;
 
@@ -425,9 +460,23 @@ void hud(SDL_Renderer* sdlRenderer) {
 			break;
 		case SDL_KEYDOWN:
 			switch (ev.key.keysym.sym) {
+			case SDLK_BACKQUOTE: DEBUG_MODE = (DEBUG_MODE + 1) % 3; break;
+			case SDLK_SPACE: do_tick = true; break;
+			case SDLK_1: single_tick = !single_tick; break;
+		    case SDLK_p: pause = !pause; break;
+			case SDLK_q: running = false; break;
+			case SDLK_LEFTBRACKET: if (pause) { prev = true; } break;
+			case SDLK_RIGHTBRACKET: if (pause) { next = true; } break;
+			case SDLK_SEMICOLON: if (pause) { objects[obj].frame_timer++; } break;
+			case SDLK_QUOTE: if (pause) { objects[obj].frame_timer--; } break;
+			case SDLK_a: if (pause) {
+				// 	. . set objects(obj,"a")=objects(obj,"a")+1
+				// 	. . set objects(obj,"a",objects(obj,"a"),"p")="0 0 5" ; keyframe position
+				// 	. . set objects(obj,"a",objects(obj,"a"),"q")=$$axisangle^xjtfq(0,1,0,0) ; keyframe quaternion
+				// 	. . set objects(obj,"a",objects(obj,"a"),"t")=1 ; frametime
+				// 	. . set objects(obj,"f")=objects(obj,"a")-1,objects(obj,"t")=0,next=1 ; select the frame
 
-			case SDLK_SPACE: advance = true; break;
-			case SDLK_a: step = !step; break;
+			} break;
 			case SDLK_h: if (pause) { objq = comp(quaternion::axis_angle({ 0,1,0 }, +M_PI / 180), objq); } break;
 			case SDLK_k: if (pause) { objq = comp(quaternion::axis_angle({ 0,1,0 }, -M_PI / 180), objq); } break;
 			case SDLK_u: if (pause) { objq = comp(quaternion::axis_angle({ 1,0,0 }, -M_PI / 180), objq); } break;
@@ -437,6 +486,8 @@ void hud(SDL_Renderer* sdlRenderer) {
 			}
 		}
 	}
+
+
 
 
 	// 	. if updated("frametime") set objects(obj,"t")=objects(obj,"a",objects(obj,"f"),"t") ;
@@ -460,11 +511,7 @@ void hud(SDL_Renderer* sdlRenderer) {
 	// 	. ;
 	// 	. if add do  ; add new keyframe
 	// 	. . set add=0
-	// 	. . set objects(obj,"a")=objects(obj,"a")+1
-	// 	. . set objects(obj,"a",objects(obj,"a"),"p")="0 0 5" ; keyframe position
-	// 	. . set objects(obj,"a",objects(obj,"a"),"q")=$$axisangle^xjtfq(0,1,0,0) ; keyframe quaternion
-	// 	. . set objects(obj,"a",objects(obj,"a"),"t")=1 ; frametime
-	// 	. . set objects(obj,"f")=objects(obj,"a")-1,objects(obj,"t")=0,next=1 ; select the frame
+
 }
 
 
