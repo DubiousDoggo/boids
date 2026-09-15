@@ -25,11 +25,12 @@ unsigned DEBUG_ENABLE = 0;
 const float debugVecMultiplier = 200;
 
 /* boid parameters */
-float minSpeed = 2;
+float minSpeed = 2;    // UNUSED
 float maxSpeed = 12;
-float maxAccel = 5.7f;
+float maxAccel = 5.7f; // UNUSED
 float baseAccel = 0.6f;
 float dragCoeff = 0.004f;
+float fish_dragCoeff = 0.008f;
 
 float flockAngle = M_PI / 4;
 
@@ -38,17 +39,20 @@ float cohesionRadius = 100;
 float avoidanceRadius = 25;
 float flockRadius = 150; 
 float obstacleRadius = 200;
+float roostRadius = 130;
 
 float alignmentWeight = 0.05f;
 float cohesionWeight = 0.005f;
 float avoidanceWeight = 0.05f;
 float flockWeight = 0.02f;
 float obstacleWeight = 0.01f;
+float targetWeight = 1.0f;
 
 float leaderChance = 0.01;
 float handedChance = 0.001;
 
-float hopChance = 0.01;
+float roostChance = 0.001;
+float hopChance = 0.0004;
 
 const int boid_size = 10;
 const int fish_size = 10;
@@ -76,16 +80,19 @@ float gravity = 0.1f;
 #define COLOR_LEFT     0, 240,   0 // GREEN
 #define COLOR_RIGHT  255,   0,   0 // RED
 #define COLOR_WATER    0, 160, 200 // WATER BLUE
-#define COLOR_FISH   255, 255,  10 // GOLDFISH ORANGE
+#define COLOR_FISH   235, 100,  52 // GOLDFISH ORANGE
+#define COLOR_ROOST  135,  62,  16 // TREE BROWN
 
 #define FLAG_LEADER 0b001
 #define FLAG_HANDED 0b010
+#define FLAG_TARGET 0b100
 
 enum boid_state { 
     FLYING, 
     TUMBLE, 
     STUNED, 
     WALKIN,
+    ROOSTN,
 };
 
 enum fish_state {
@@ -99,6 +106,7 @@ struct boid {
     unsigned flags;
     boid_state state;
     unsigned state_timer;
+    vec2f target;
 };
 
 struct fish {
@@ -110,9 +118,15 @@ struct fish {
 
 std::vector<boid> boids(100);
 std::vector<SDL_FRect> boid_obstacles;
+std::vector<std::vector<vec2f>> boid_roosts {
+    {{WINDOW_WIDTH / 3, WINDOW_HEIGHT / 3}, { 2 * WINDOW_WIDTH / 3, WINDOW_HEIGHT / 3 - 70 }},
+    {{WINDOW_WIDTH / 3 - 20, WINDOW_HEIGHT / 3 + 30}, {WINDOW_WIDTH / 2, WINDOW_HEIGHT / 3 + 50}, {3 * WINDOW_WIDTH / 4, WINDOW_HEIGHT / 3}},
+    {{WINDOW_WIDTH / 3 + 30, WINDOW_HEIGHT / 3 - 100}, {WINDOW_WIDTH / 2, WINDOW_HEIGHT / 3 - 80 }, {3 * WINDOW_WIDTH / 4 - 100, WINDOW_HEIGHT / 3 - 100}},
+};
 
 std::vector<fish> fishes(100);
 std::vector<SDL_FRect> fish_obstacles;
+
 
 std::default_random_engine generator;
 std::uniform_real_distribution<float> rand_percent(0, 1);
@@ -196,8 +210,8 @@ vec2f calc_boid_accel(const std::vector<boid>& boids, std::size_t index, SDL_Ren
         flock_vec *= flockWeight;
     }
 
+
     vec2f obstacle_vec{ 0, 0 };
-    
     vec2f closest_vec{INFINITY, INFINITY};
     for (const SDL_FRect& obstacle : boid_obstacles) {
         vec2f ob = vec_to(b.pos, obstacle);
@@ -208,14 +222,21 @@ vec2f calc_boid_accel(const std::vector<boid>& boids, std::size_t index, SDL_Ren
     if (mag(closest_vec) != INFINITY) {
         obstacle_vec += -normal(closest_vec - proj(closest_vec, b.vel)) * (obstacleRadius - mag(closest_vec)); 
     }
-
     obstacle_vec *= obstacleWeight;
 
+    vec2f target_vec{ 0, 0 };
+    if (b.flags & FLAG_TARGET) {
+        target_vec += normal(b.target - b.pos);
+    }
+    target_vec *= targetWeight;
+
     vec2f drag_vec = -b.vel * mag(b.vel) * dragCoeff;
+    
     vec2f base_vec = normal(b.vel) * baseAccel;
 
+
     // accelerate
-    vec2f accel = alignment_vec + cohesion_vec + avoidance_vec + flock_vec + obstacle_vec + drag_vec + base_vec; 
+    vec2f accel = alignment_vec + cohesion_vec + avoidance_vec + flock_vec + obstacle_vec + drag_vec + base_vec + target_vec; 
     
     if (debug_render != nullptr)
     {
@@ -240,6 +261,12 @@ vec2f calc_boid_accel(const std::vector<boid>& boids, std::size_t index, SDL_Ren
         RenderCircle(debug_render, obstacleRadius, b.pos);
         for (const SDL_FRect& obstacle : boid_obstacles) {
             SDL_RenderDrawRectF(debug_render, &obstacle);
+        }
+
+        if (b.flags & FLAG_TARGET) {
+            SDL_SetRenderDrawColor(debug_render, COLOR_ROOST, 255);
+            RenderVec(debug_render, b.pos, target_vec * debugVecMultiplier);
+            RenderCircle(debug_render, roostRadius, b.target);
         }
 
         SDL_SetRenderDrawColor(debug_render, COLOR_DRAG, 255);
@@ -308,7 +335,7 @@ void InitBoids(std::vector<boid>& boids)
     std::uniform_real_distribution<float> rand_x(edgeObstacle, WINDOW_WIDTH - edgeObstacle);
     std::uniform_real_distribution<float> rand_y(edgeObstacle, WINDOW_HEIGHT - groundHeight);
     std::uniform_real_distribution<float> rand_vel(-maxSpeed, maxSpeed);
-    std::uniform_int_distribution<uint8_t> rand_bit(0, 2);
+    std::uniform_int_distribution<uint8_t> rand_bit(0, 1);
 
     for (boid& boid : boids) {
         boid.pos.x = rand_x(generator);
@@ -359,10 +386,17 @@ void UpdateBoids()
                     if (n.pos.y > WINDOW_HEIGHT - groundHeight) {
                         n.state = TUMBLE;
                         n.state_timer = 120; 
+                    } 
+                    else if (n.flags & FLAG_TARGET) {
+                        if (mag(n.pos - n.target) < roostRadius) {
+                            n.state = ROOSTN;
+                            n.state_timer = 500;
+                        }
                     }
                 }
                 break;
             }
+
             case TUMBLE: {
 
                 const float friction_coeff = 0.2;
@@ -378,14 +412,16 @@ void UpdateBoids()
                 }
                 break; 
             }
-            case STUNED:
-                
+
+            case STUNED: {   
+            
                 if (!n.state_timer) {
                     n.vel = n.dir;
                     n.state = WALKIN;
                     n.state_timer = 30;
                 }
                 break;
+            }
 
             case WALKIN: {
 
@@ -399,6 +435,32 @@ void UpdateBoids()
                 }
                 break;
             }
+
+            case ROOSTN: {
+            
+                float dist = mag(n.target - n.pos);
+                if (dist < 1)  {
+                    n.pos = n.target;
+                    n.vel = { 0, 0 };
+                    n.dir = { 0, 1 };
+                } else {
+                    n.vel += normal(n.target - n.pos);
+                    n.vel *= 0.8;
+                    n.pos += n.vel;
+
+                    float percent = dist / roostRadius;
+                    n.dir = normal(normal(n.vel) * percent + vec2f{ 0, 1 } * (1 - percent));
+                }
+                
+
+                if (!n.state_timer) {
+                    n.flags &= ~FLAG_TARGET;
+                    n.state = FLYING;
+                    n.vel = { 0, -0.05 };
+                }
+                break;
+            }
+
         }
 
         n.pos.x = wrap<float>(n.pos.x, WINDOW_WIDTH);
@@ -449,6 +511,20 @@ void UpdateBoids()
             // gain leadership if there are none
             if (leader_neighbors == 0 && rand_percent(generator) < leaderChance) {
                 n.flags |= FLAG_LEADER;
+            }
+        }
+
+        if (!(n.flags & FLAG_TARGET)) {
+            if (rand_percent(generator) < roostChance) {
+                // choose a random spot to roost on
+                // this is not an even distribution across roosts, ok for now
+                std::uniform_int_distribution<std::size_t> rand_roost(0, boid_roosts.size() - 1);
+                std::vector<vec2f> & roost = boid_roosts[rand_roost(generator)];
+                std::uniform_int_distribution<std::size_t> rand_segment(0, roost.size() - 2);
+                std::size_t segment = rand_segment(generator);
+                vec2f vec = roost[segment+1] - roost[segment];
+                n.target = vec * rand_percent(generator) + roost[segment];
+                n.flags |= FLAG_TARGET;
             }
         }
 
@@ -550,7 +626,7 @@ vec2f calc_fish_accel(const std::vector<fish>& fishes, std::size_t index, SDL_Re
 
     obstacle_vec *= obstacleWeight;
 
-    vec2f drag_vec = -b.vel * mag(b.vel) * dragCoeff;
+    vec2f drag_vec = -b.vel * mag(b.vel) * fish_dragCoeff;
     vec2f base_vec = normal(b.vel) * baseAccel;
 
     // accelerate
@@ -769,7 +845,16 @@ void UpdateFish(std::vector<fish>& fishes)
 
 }
 
+void RenderRoosts(std::vector<std::vector<vec2f>>& roosts, SDL_Renderer* renderer)
+{
+    // TODO make this not look shit
+    SDL_SetRenderDrawColor(renderer, COLOR_ROOST, 255);
+    for (std::vector<vec2f>& roost : roosts) {
+        SDL_RenderDrawLinesF(renderer, reinterpret_cast<SDL_FPoint*>(roost.data()), roost.size());
+    }
+    SDL_RenderDrawLineF(renderer, WINDOW_WIDTH / 2, WINDOW_HEIGHT - groundHeight + ((groundHeight - waterHeight) / 2), WINDOW_WIDTH / 2, WINDOW_HEIGHT / 3 - 150);
 
+}
 
 void mainLoop();
 
@@ -777,12 +862,12 @@ SDL_Renderer* sdlRenderer;
 SDL_Texture* targetTexture;
 
 const int param_rows = 4;
-const int param_cols = 5;
+const int param_cols = 6;
 int param_index = 0;
-float *params[param_rows * param_cols] = { &alignmentRadius, &cohesionRadius, &avoidanceRadius, &flockRadius, &obstacleRadius,
-                                           &alignmentWeight, &cohesionWeight, &avoidanceWeight, &flockWeight, &obstacleWeight,
-                                           &maxSpeed,        &maxAccel,       nullptr,          &dragCoeff,      &edgeObstacle, 
-                                           &minSpeed,        &baseAccel,      nullptr,          nullptr,         nullptr };
+float *params[param_rows * param_cols] = { &alignmentRadius, &cohesionRadius, &avoidanceRadius, &flockRadius, &obstacleRadius, &roostRadius,
+                                           &alignmentWeight, &cohesionWeight, &avoidanceWeight, &flockWeight, &obstacleWeight, &targetWeight,
+                                           &maxSpeed,        &maxAccel,       nullptr,          &dragCoeff,   &edgeObstacle,   nullptr,
+                                           &minSpeed,        &baseAccel,      nullptr,          nullptr,         nullptr,      nullptr };
 float delta[param_rows * param_cols];
 
 bool running = true;
@@ -915,6 +1000,8 @@ void mainLoop()
     SDL_RenderFillRectF(sdlRenderer, &water);
     }
 
+    RenderRoosts(boid_roosts, sdlRenderer);
+
     // Draw boids
     RenderBoids(boids, sdlRenderer);
     RenderFish(fishes, sdlRenderer);
@@ -925,18 +1012,18 @@ void mainLoop()
         #define STRINGIZE(S) #S
         #define STRING(S) STRINGIZE(S)
         #define PARAM_WIDTH 10
-        #define PARAM_FMT " %" STRING(PARAM_WIDTH) "f"
+        #define PARAM_FRMT " %" STRING(PARAM_WIDTH) "f"
         // Render parameters
         RenderMessage(sdlRenderer, 5, 5, string_format(
             "Use arrow keys and +/- to edit parameters. Press ~ to toggle debug display, R to reset all boids. A to toggle single step, space to advance\n" 
-            "        ALIGNMENT   COHESION  AVOIDANCE   FLOCK  OBSTACLE\n"
-            "RADIUS" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
-            "WEIGHT" PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT PARAM_FMT "\n"
+            "        ALIGNMENT   COHESION  AVOIDANCE      FLOCK   OBSTACLE      ROOST\n"
+            "RADIUS" PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT"\n"
+            "WEIGHT" PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT PARAM_FRMT"\n"
             "            SPEED      ACCEL              DRAG          EDGE\n"
-            "   MAX" PARAM_FMT PARAM_FMT "           " PARAM_FMT PARAM_FMT "\n"
-            "   MIN" PARAM_FMT PARAM_FMT "\n",
-            alignmentRadius, cohesionRadius, avoidanceRadius, flockRadius, obstacleRadius,
-            alignmentWeight, cohesionWeight, avoidanceWeight, flockWeight, obstacleWeight,
+            "   MAX" PARAM_FRMT PARAM_FRMT "           " PARAM_FRMT PARAM_FRMT "\n"
+            "   MIN" PARAM_FRMT PARAM_FRMT "\n",
+            alignmentRadius, cohesionRadius, avoidanceRadius, flockRadius, obstacleRadius, roostRadius,
+            alignmentWeight, cohesionWeight, avoidanceWeight, flockWeight, obstacleWeight, targetWeight,
             maxSpeed, maxAccel, dragCoeff, edgeObstacle,
             minSpeed, baseAccel
         ));
